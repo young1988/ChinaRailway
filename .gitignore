@@ -1,0 +1,18 @@
+# WorkBuddy 项目内部数据（记忆 / 技能 / 缓存，非应用代码）
+.workbuddy/
+
+# 抓取原始数据
+# 这些是从 OpenStreetMap 拉取的原始 JSON（约 356MB），仅作抓取中间产物，
+# 已清洗进 railway-demo/*.js / *.json 的精简数据，不再入库。
+railway-demo/tools/raw*/
+raw*/
+
+# Python 产物
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# 系统 / 本地
+.DS_Store
+*.local

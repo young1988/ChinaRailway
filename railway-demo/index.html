@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>铁路足迹 · P0 验证</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #map { width: 100%; height: 100vh; position: relative; z-index: 1; }
+  .panel {
+    position: absolute; top: 16px; left: 16px; width: 300px;
+    background: #fff; border-radius: 12px; padding: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.10); z-index: 9999;
+    max-height: calc(100vh - 32px); overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel select, .panel textarea, .panel button { position: relative; z-index: 2; }
+  .panel h1 { font-size: 15px; font-weight: 500; margin: 0 0 4px; }
+  .panel .sub { font-size: 12px; color: #8a8a8a; margin: 0 0 14px; line-height: 1.5; }
+  .sec-title { font-size: 12px; color: #666; margin: 16px 0 8px; }
+  .net-chk { display:flex; align-items:center; gap:6px; font-size:12px; color:#444; padding:4px 0; cursor:pointer; user-select:none; }
+  .net-chk input { cursor:pointer; margin:0; }
+  .net-chk i { display:inline-block; width:16px; height:3px; border-radius:2px; flex:none; }
+  .net-chk span { color:#999; }
+  textarea {
+    width: 100%; box-sizing: border-box; height: 68px; resize: none;
+    border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px;
+    font-size: 12px; font-family: inherit; color: #333; outline: none;
+  }
+  textarea:focus { border-color: #2f6fed; }
+  .btn {
+    display: inline-block; margin-top: 8px; padding: 7px 14px; font-size: 13px;
+    border: 1px solid #d8d8d8; background: #fff; border-radius: 8px;
+    cursor: pointer; color: #333;
+  }
+  .btn:hover { border-color: #2f6fed; color: #2f6fed; }
+  .btn-primary { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+  .btn-primary:hover { background: #2560d4; color: #fff; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: #f6f7f9; border-radius: 8px; padding: 10px 12px; }
+  .stat .k { font-size: 12px; color: #888; }
+  .stat .v { font-size: 20px; font-weight: 500; color: #222; margin-top: 2px; }
+  .stat .v small { font-size: 12px; font-weight: 400; color: #888; margin-left: 2px; }
+  .trip {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+    border: 1px solid #ececec; border-radius: 8px; margin-bottom: 6px; cursor: pointer;
+  }
+  .trip:hover { border-color: #2f6fed; background: #fafbff; }
+  .trip .code { font-size: 13px; font-weight: 500; color: #222; min-width: 52px; }
+  .trip .route { font-size: 12px; color: #666; flex: 1; }
+  .trip .km { font-size: 12px; color: #999; }
+  .trip .src { font-size: 10px; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+  .trip .src.real { color: #185FA5; background: #eaf1fb; }
+  .trip .src.part { color: #0b6b4f; background: #e6f5ee; }
+  .trip .src.fake { color: #9a6400; background: #fdf3e2; }
+  .trip .del { font-size: 12px; color: #c0c0c0; padding: 0 2px; }
+  .trip .del:hover { color: #e24b4a; }
+  .empty { font-size: 12px; color: #aaa; padding: 10px 0; }
+  .legend {
+    position: absolute; right: 16px; bottom: 24px; background: #fff;
+    border-radius: 10px; padding: 10px 14px; font-size: 12px; color: #555;
+    box-shadow: 0 2px 12px rgba(0,0,0,.10); z-index: 9999; line-height: 1.9;
+    pointer-events: none;
+  }
+  .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .toast {
+    position: absolute; left: 50%; top: 24px; transform: translateX(-50%);
+    background: #222; color: #fff; font-size: 13px; padding: 9px 16px;
+    border-radius: 8px; z-index: 10000; opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  /* ===== 手动录入车站 ===== */
+  .st-grid { display: flex; align-items: center; gap: 6px; }
+  .st-grid .arw { color: #bbb; font-size: 12px; flex: none; }
+  .st-in {
+    width: 100%; box-sizing: border-box; padding: 7px 9px; font-size: 13px;
+    border: 1px solid #e3e3e3; border-radius: 8px; outline: none;
+    font-family: inherit; color: #333; background: #fff; min-width: 0;
+  }
+  .st-in:focus { border-color: #2f6fed; }
+  .st-in + .st-in { margin-top: 6px; }
+  .sug {
+    border: 1px solid #e3e3e3; border-radius: 8px; margin-top: 5px;
+    max-height: 156px; overflow-y: auto; background: #fff;
+  }
+  .sug div { padding: 6px 10px; font-size: 12px; cursor: pointer; color: #333; }
+  .sug div:hover, .sug div.on { background: #eef3ff; color: #2f6fed; }
+  .sug .none { color: #aaa; cursor: default; }
+  .sug .none:hover { background: #fff; color: #aaa; }
+  .pick {
+    font-size: 12px; color: #8a5a00; background: #fff8ea; border: 1px solid #ffe2ac;
+    border-radius: 8px; padding: 7px 9px; margin-top: 6px; line-height: 1.7;
+  }
+  .pick b { font-weight: 500; cursor: pointer; text-decoration: underline; margin-right: 10px; white-space: nowrap; }
+  .pick .tip { display: block; color: #a3803f; margin-bottom: 2px; }
+  .note { font-size: 11px; color: #9a6400; background: #fdf6e9; border-radius: 6px; padding: 5px 8px; margin-top: 6px; line-height: 1.6; }
+  .seg { display: flex; gap: 4px; margin-top: 6px; }
+  .seg-b {
+    flex: 1; padding: 5px 0; font-size: 12px; font-family: inherit;
+    border: 1px solid #e3e3e3; background: #fff; border-radius: 7px; cursor: pointer; color: #555;
+  }
+  .seg-b:hover { border-color: #2f6fed; color: #2f6fed; }
+  .seg-b.on { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+  .trip .src.pf { color: #7a7f86; background: #f0f1f3; }
+
+  /* ===== 深色模式：面板 / 图例 / 控件跟随底图 ===== */
+  body.dark #map { background: #0d0f13; }
+  body.dark .panel { background: #191b20; box-shadow: 0 2px 16px rgba(0,0,0,.55); }
+  body.dark .panel h1 { color: #e8eaed; }
+  body.dark .panel .sub { color: #8b9096; }
+  body.dark .sec-title { color: #9aa0a8; }
+  body.dark .net-chk { color: #c4c9d0; }
+  body.dark .net-chk span { color: #7c828b; }
+  body.dark textarea { background: #23262d; border-color: #383d45; color: #e8eaed; }
+  body.dark textarea:focus { border-color: #5b8def; }
+  body.dark .btn { background: #23262d; border-color: #3a4049; color: #dfe3e8; }
+  body.dark .btn:hover { border-color: #5b8def; color: #8fb2ff; }
+  body.dark .btn-primary { background: #3b6fd4; border-color: #3b6fd4; color: #fff; }
+  body.dark .btn-primary:hover { background: #4a7ee6; color: #fff; }
+  body.dark .stat { background: #23262d; }
+  body.dark .stat .k { color: #8b9096; }
+  body.dark .stat .v { color: #eef1f5; }
+  body.dark .stat .v small { color: #8b9096; }
+  body.dark .trip { border-color: #2f343c; }
+  body.dark .trip:hover { border-color: #5b8def; background: #23262d; }
+  body.dark .trip .code { color: #eef1f5; }
+  body.dark .trip .route { color: #a4aab3; }
+  body.dark .trip .km { color: #8b9096; }
+  body.dark .trip .src.real { color: #7ab4f0; background: #1d2a3d; }
+  body.dark .trip .src.part { color: #4fbf94; background: #16302a; }
+  body.dark .trip .src.fake { color: #e0b356; background: #332a17; }
+  body.dark .empty { color: #6b7078; }
+  body.dark .st-in { background: #23262d; border-color: #383d45; color: #e8eaed; }
+  body.dark .st-in:focus { border-color: #5b8def; }
+  body.dark .st-grid .arw { color: #5a6069; }
+  body.dark .sug { background: #23262d; border-color: #383d45; }
+  body.dark .sug div { color: #dfe3e8; }
+  body.dark .sug div:hover, body.dark .sug div.on { background: #2c3445; color: #8fb2ff; }
+  body.dark .sug .none { color: #6b7078; }
+  body.dark .sug .none:hover { background: #23262d; color: #6b7078; }
+  body.dark .pick { color: #e0b356; background: #2c2618; border-color: #4a3f22; }
+  body.dark .pick .tip { color: #b99a55; }
+  body.dark .note { color: #d8b26a; background: #2a2417; }
+  body.dark .seg-b { background: #23262d; border-color: #383d45; color: #dfe3e8; }
+  body.dark .seg-b:hover { border-color: #5b8def; color: #8fb2ff; }
+  body.dark .seg-b.on { background: #3b6fd4; border-color: #3b6fd4; color: #fff; }
+  body.dark .trip .src.pf { color: #9aa0a8; background: #2a2d33; }
+  body.dark .legend { background: rgba(25,27,32,.94); color: #c4c9d0; box-shadow: 0 2px 16px rgba(0,0,0,.55); }
+  /* 兜底：官方夜间样式未生效时，用 CSS 反色把白色底图压暗 */
+  body.dark.force-invert #map canvas { filter: invert(1) hue-rotate(180deg) brightness(.94) saturate(.65); }
+  /* 面板里的行内样式无法用普通选择器覆盖，这里统一压暗 */
+  body.dark [style*="border-top:1px solid #eee"] { border-top-color: #2f343c !important; }
+  body.dark #sLines { color: #a4aab3 !important; }
+  body.dark #keyInput { background: #23262d; border-color: #383d45 !important; color: #e8eaed; }
+</style>
+<script>
+/* 腾讯地图 Key 解析：
+   1) URL ?key=XXX        2) localStorage TMAP_KEY      3) 内置开发代理（仅本机预览）
+   自己部署时任选前两种即可，无需改动代码 */
+(function () {
+  var K = '';
+  try {
+    K = new URLSearchParams(location.search).get('key')
+     || localStorage.getItem('TMAP_KEY') || '';
+  } catch (e) {}
+  K = (K || '').trim();
+  window.__TMAP_KEY__ = K;
+  if (K) {
+    window._TMapSecurityConfig = {};
+  } else {
+    window._TMapSecurityConfig = {
+      serviceHost: 'http://127.0.0.1:__WB_HTTP_PORT__/_TMapService/_wbt/__WB_TMAP_SECRET__'
+    };
+  }
+  document.write(
+    '<script src="https://map.qq.com/api/gljs?v=1.exp' +
+    (K ? '&key=' + encodeURIComponent(K) : '') + '"><\/script>'
+  );
+})();
+</script>
+<script src="lines_real.js"></script>
+<script src="highspeed_lines.js"></script>
+<script src="conventional_lines.js"></script>
+<script src="stations_real.js"></script>
+<script src="stations_all.js"></script>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;">
+    <h1>铁路足迹</h1>
+    <button class="btn" style="margin:0;padding:4px 10px;font-size:12px;" onclick="App.togglePanel()" id="panelBtn">收起</button>
+  </div>
+  <p class="sub">P0 验证版：导入车次后点亮乘坐过的线路</p>
+  <div class="sub" id="meta" style="margin:0 0 12px;"></div>
+  <div id="panelBody">
+
+  <div class="sec-title">导入行程（粘贴 12306 短信 / 订单文本）</div>
+  <textarea id="paste" placeholder="例：您购买的 5月1日 G1 次 北京南 至 上海虹桥 列车已开具电子发票"></textarea>
+  <div>
+    <button class="btn btn-primary" onclick="App.importFromText()">解析并点亮</button>
+    <button class="btn" onclick="App.fillSample()">填入示例</button>
+  </div>
+
+  <div class="sec-title">手动录入车站（自动吸附线路）<span id="nSt"></span></div>
+  <div class="st-grid">
+    <input class="st-in" id="stFrom" placeholder="出发站" autocomplete="off">
+    <span class="arw">→</span>
+    <input class="st-in" id="stTo" placeholder="到达站" autocomplete="off">
+  </div>
+  <input class="st-in" id="stVia" placeholder="经停站（可选，空格或逗号分隔）" autocomplete="off" style="margin-top:6px;">
+  <div id="stSug" class="sug" style="display:none;"></div>
+  <div id="stPick"></div>
+  <div class="seg" id="prefSeg">
+    <button class="seg-b on" id="pfAuto" onclick="App.setPref('')">自动</button>
+    <button class="seg-b" id="pfHs" onclick="App.setPref('highspeed')">高铁优先</button>
+    <button class="seg-b" id="pfCv" onclick="App.setPref('conventional')">普速优先</button>
+  </div>
+  <div class="sub" style="margin:6px 0 0;font-size:11px;">同一区间高铁、普速都能走时按此选择（也影响短信导入）</div>
+  <button class="btn btn-primary" style="margin-top:8px;width:100%;" onclick="App.addByStations()">吸附并点亮</button>
+  <div class="sub" style="margin:6px 0 0;font-size:11px;">车次已停运或改线时用这个：填站名即可，系统会沿最近的真实轨道追踪</div>
+
+  <div class="sec-title">我的行程（点击定位，× 删除）</div>
+  <div id="trips"><div class="empty">暂无行程</div></div>
+
+  <div class="sec-title">数据存档<span id="archInfo"></span></div>
+  <div style="display:flex;gap:6px;align-items:center;">
+    <select id="archSel" style="flex:1;min-width:0;padding:6px;font-size:12px;border:1px solid #e3e3e3;border-radius:8px;" onchange="App.switchArch(this.value)"></select>
+    <button class="btn" style="margin:0;padding:5px 8px;font-size:12px;" onclick="App.newArch()">新建</button>
+    <button class="btn" style="margin:0;padding:5px 8px;font-size:12px;" onclick="App.delArch()">删除</button>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:6px;">
+    <button class="btn" style="flex:1;margin:0;padding:5px 0;font-size:12px;" onclick="App.exportData()">导出备份</button>
+    <button class="btn" style="flex:1;margin:0;padding:5px 0;font-size:12px;" onclick="document.getElementById('importFile').click()">导入备份</button>
+    <button class="btn" style="margin:0;padding:5px 8px;font-size:12px;color:#c0392b;" onclick="App.clearArch()">清空</button>
+  </div>
+  <input type="file" id="importFile" accept=".json,application/json" style="display:none;" onchange="App.importData(this)">
+  <div class="sub" style="margin:6px 0 0;font-size:11px;">
+    行程自动存在本机浏览器里，刷新、关页面都不丢。换设备、换浏览器或清缓存前请先「导出备份」。
+    一台机器几个人共用时，各建一个档案分开存。
+  </div>
+
+  <div class="sec-title">手动添加车次</div>
+  <select id="trainSel" style="width:100%;padding:7px;font-size:13px;border:1px solid #e3e3e3;border-radius:8px;">
+    <option value="">选择车次…</option>
+  </select>
+  <button class="btn" style="margin-top:8px;width:100%;" onclick="App.addFromSelect()">添加该车次</button>
+
+  <div class="sec-title">足迹统计</div>
+  <div class="stats">
+    <div class="stat"><div class="k">累计乘车里程</div><div class="v"><span id="sKm">0</span><small>km</small></div></div>
+    <div class="stat"><div class="k">行程次数</div><div class="v"><span id="sCnt">0</span><small>次</small></div></div>
+    <div class="stat"><div class="k">点亮里程</div><div class="v"><span id="sLit">0</span><small>km</small></div></div>
+    <div class="stat"><div class="k">覆盖省份</div><div class="v"><span id="sProv">0</span><small>个</small></div></div>
+    <div class="stat" style="grid-column:1/3;"><div class="k">走过线路</div><div class="v" style="font-size:14px;font-weight:400;color:#555;" id="sLines">—</div></div>
+  </div>
+
+  <div class="sec-title">底图与显示</div>
+  <div class="seg" id="baseSeg" style="margin-bottom:8px;">
+    <button class="seg-b" data-base="normal" onclick="App.setBase('normal')">正常</button>
+    <button class="seg-b" data-base="black" onclick="App.setBase('black')">纯黑</button>
+    <button class="seg-b" data-base="satellite" onclick="App.setBase('satellite')">卫星</button>
+  </div>
+  <div>
+    <label class="net-chk"><input type="checkbox" id="chkFog" onchange="App.setFog(this.checked)"><i></i>迷雾地图（未走线路变暗）</label>
+    <label class="net-chk"><input type="checkbox" id="chkFocus" onchange="App.setFocus(this.checked)"><i></i>铁路专注（弱化公路/标注）</label>
+    <label class="net-chk" id="invertRow" style="display:none;"><input type="checkbox" id="chkInvert" onchange="App.toggleInvert(this.checked)"><i></i>强制反色<span>（底图没变暗时勾它）</span></label>
+  </div>
+
+  <div class="sec-title">路网显示</div>
+  <div id="netToggles">
+    <label class="net-chk"><input type="checkbox" id="chkHs" checked onchange="App.toggleNet('hs',this.checked)"><i data-c="highspeed.base"></i>高铁路网<span id="nHs"></span></label>
+    <label class="net-chk"><input type="checkbox" id="chkConv" checked onchange="App.toggleNet('conv',this.checked)"><i data-c="conventional.base"></i>普速路网<span id="nConv"></span></label>
+  </div>
+
+  <div class="sec-title">数据说明</div>
+  <p class="sub" style="margin:0 0 8px;">
+    线路几何来自 OpenStreetMap 铁路线位（已转 GCJ-02），站点为 OSM 真实坐标，
+    里程为沿轨道累加值，仅用于体验验证。
+  </p>
+  <p class="sub" style="margin:0;">
+    手动录入的车站会自动吸附到最近的真实轨道并沿线追踪，可跨线接续；
+    若该站周边 OSM 没有线路数据（如已拆除的旧线），会退化为直线并如实标注。
+  </p>
+  <div id="keyBox" style="display:none;border-top:1px solid #eee;padding-top:10px;">
+    <div class="sub" style="margin:0 0 6px;">腾讯地图 Key（自己部署时填写）</div>
+    <input id="keyInput" placeholder="粘贴 Key 后回车保存" style="width:100%;padding:7px;font-size:12px;border:1px solid #e3e3e3;border-radius:8px;box-sizing:border-box;">
+    <div style="margin-top:6px;display:flex;gap:6px;">
+      <button class="btn" style="flex:1;margin:0;font-size:12px;padding:5px 0;" onclick="App.saveKey()">保存并刷新</button>
+      <button class="btn" style="flex:1;margin:0;font-size:12px;padding:5px 0;" onclick="App.clearKey()">清除</button>
+    </div>
+  </div>
+  <div style="border-top:1px solid #eee;padding-top:8px;margin-top:8px;">
+    <button class="btn" style="margin:0;padding:4px 0;font-size:12px;width:100%;" onclick="App.toggleKeyBox()">地图 Key 设置</button>
+  </div>
+  <p class="sub" id="verLine" style="margin:10px 0 0;padding-top:8px;border-top:1px solid #eee;font-size:11px;text-align:right;"></p>
+  </div>
+</div>
+
+<div class="legend" id="legend">
+  <div><i data-c="highspeed.lit"></i>高铁/城际（已坐）</div>
+  <div><i data-c="highspeed.base"></i>高铁/城际（未坐）</div>
+  <div><i data-c="conventional.lit"></i>普速铁路（已坐）</div>
+  <div><i data-c="conventional.base"></i>普速铁路（未坐）</div>
+  <div><i data-c="narrow.lit"></i>窄轨/米轨（已坐）</div>
+  <div><i data-c="narrow.base"></i>窄轨/米轨（未坐）</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   数据层：线路与车次（预置，P0 阶段手工维护）
+   坐标 [lat, lng]，GCJ-02 近似值
+   ============================================================ */
+const LINES = {
+  jinghu: {
+    name: '京沪高铁', provinces: ['北京', '天津', '河北', '山东', '江苏', '上海'],
+    stations: [
+      ['北京南', 39.865, 116.379], ['廊坊', 39.518, 116.704], ['天津南', 39.341, 117.061],
+      ['德州东', 37.437, 116.291], ['济南西', 36.674, 116.905], ['泰安', 36.196, 117.081],
+      ['曲阜东', 35.562, 117.005], ['徐州东', 34.276, 117.243], ['蚌埠南', 32.914, 117.395],
+      ['南京南', 31.969, 118.797], ['镇江南', 32.114, 119.433], ['无锡东', 31.585, 120.451],
+      ['苏州北', 31.412, 120.642], ['上海虹桥', 31.194, 121.322]
+    ]
+  },
+  jingguang: {
+    name: '京广高铁', provinces: ['北京', '河北', '河南', '湖北', '湖南', '广东'],
+    stations: [
+      ['北京西', 39.895, 116.322], ['保定东', 38.883, 115.531], ['石家庄', 38.043, 114.514],
+      ['邯郸东', 36.626, 114.541], ['郑州东', 34.758, 113.774], ['信阳东', 32.126, 114.128],
+      ['武汉', 30.606, 114.424], ['岳阳东', 29.353, 113.236], ['长沙南', 28.152, 113.061],
+      ['衡阳东', 26.894, 112.621], ['韶关', 24.813, 113.591], ['广州南', 23.005, 113.271]
+    ]
+  },
+  hukun: {
+    name: '沪昆高铁', provinces: ['上海', '浙江', '江西', '湖南', '贵州', '云南'],
+    stations: [
+      ['上海虹桥', 31.194, 121.322], ['杭州东', 30.290, 120.213], ['金华', 29.079, 119.649],
+      ['上饶', 28.458, 117.949], ['南昌西', 28.657, 115.842], ['长沙南', 28.152, 113.061],
+      ['怀化南', 27.562, 110.005], ['贵阳北', 26.652, 106.626], ['昆明南', 25.045, 102.877]
+    ]
+  },
+  jingha: {
+    name: '京哈线', provinces: ['北京', '天津', '河北', '辽宁', '吉林', '黑龙江'],
+    stations: [
+      ['北京', 39.903, 116.427], ['唐山', 39.630, 118.180], ['秦皇岛', 39.936, 119.598],
+      ['锦州南', 41.086, 121.129], ['沈阳北', 41.843, 123.443], ['长春西', 43.884, 125.062],
+      ['哈尔滨西', 45.708, 126.532]
+    ]
+  },
+  longhai: {
+    name: '陇海线', provinces: ['江苏', '安徽', '河南', '陕西', '甘肃'],
+    stations: [
+      ['连云港', 34.596, 119.163], ['徐州', 34.266, 117.215], ['商丘', 34.412, 115.641],
+      ['郑州', 34.758, 113.665], ['洛阳', 34.683, 112.454], ['西安', 34.341, 108.944],
+      ['宝鸡', 34.360, 107.237], ['兰州', 36.061, 103.834]
+    ]
+  },
+  jingjiu: {
+    name: '京九线', provinces: ['北京', '河北', '山东', '河南', '安徽', '江西', '广东'],
+    stations: [
+      ['北京西', 39.895, 116.322], ['衡水', 37.739, 115.669], ['聊城', 36.456, 115.987],
+      ['阜阳', 32.899, 115.819], ['九江', 29.706, 115.993], ['南昌', 28.676, 115.892],
+      ['赣州', 25.828, 114.940], ['深圳', 22.543, 114.118]
+    ]
+  },
+  lanxin: {
+    name: '兰新线', provinces: ['甘肃', '青海', '新疆'],
+    stations: [
+      ['兰州', 36.061, 103.834], ['武威', 37.928, 102.636], ['张掖', 38.926, 100.451],
+      ['嘉峪关', 39.802, 98.277], ['哈密', 42.848, 93.515], ['吐鲁番', 42.948, 89.185],
+      ['乌鲁木齐', 43.856, 87.601]
+    ]
+  },
+  chengkun: {
+    name: '成昆线', provinces: ['四川', '云南'],
+    stations: [
+      ['成都', 30.674, 104.074], ['眉山', 30.049, 103.833], ['峨眉', 29.603, 103.352],
+      ['西昌', 27.894, 102.264], ['攀枝花', 26.582, 101.722], ['昆明', 25.051, 102.716]
+    ]
+  },
+  yanshen: {
+    name: '沿海通道', provinces: ['上海', '浙江', '福建', '广东'],
+    stations: [
+      ['杭州东', 30.290, 120.213], ['宁波', 29.876, 121.545],
+      ['温州南', 28.006, 120.676], ['福州', 26.093, 119.316], ['厦门北', 24.641, 118.071],
+      ['深圳北', 22.610, 114.029]
+    ]
+  },
+  hanrong: {
+    name: '沪汉蓉通道', provinces: ['上海', '江苏', '安徽', '湖北', '重庆', '四川'],
+    stations: [
+      ['上海虹桥', 31.194, 121.322], ['南京南', 31.969, 118.797], ['合肥南', 31.823, 117.281],
+      ['武汉', 30.606, 114.424], ['宜昌东', 30.696, 111.353], ['重庆北', 29.607, 106.551],
+      ['成都东', 30.641, 104.141]
+    ]
+  }
+};
+
+const TRAINS = {
+  'G1':    { line: 'jinghu',    from: '北京南',  to: '上海虹桥' },
+  'G101':  { line: 'jinghu',    from: '北京南',  to: '南京南' },
+  'G79':   { line: 'jingguang', from: '北京西',  to: '广州南' },
+  'G1001': { line: 'jingguang', from: '武汉',    to: '广州南' },
+  'G1373': { line: 'hukun',     from: '上海虹桥', to: '昆明南' },
+  'Z15':   { line: 'jingha',    from: '北京',    to: '哈尔滨西' },
+  'K113':  { line: 'chengkun',  from: '成都',    to: '昆明' },
+  'T109':  { line: 'jingjiu',   from: '北京西',  to: '深圳' },
+  'Z41':   { line: 'lanxin',    from: '兰州',    to: '乌鲁木齐' },
+  'D3107': { line: 'yanshen',   from: '杭州东',  to: '福州' },
+  'D2206': { line: 'hanrong',   from: '上海虹桥', to: '成都东' },
+  'K1024': { line: 'longhai',   from: '连云港',  to: '兰州' }
+};
+
+/* 手写坐标误差可达十几公里，会用错误站位点去匹配线路，
+   所以这里一律覆盖成 OSM 的真实车站节点坐标（GCJ-02）。 */
+(function applyRealStations() {
+  const S = window.STATIONS_REAL || {};
+  Object.keys(LINES).forEach(id => {
+    LINES[id].stations = LINES[id].stations.map(s =>
+      S[s[0]] ? [s[0], S[s[0]][0], S[s[0]][1]] : s
+    );
+  });
+})();
+
+/* ============================================================
+   几何层：优先使用 OSM 真实线位，缺失时回退到站点直连
+   ============================================================ */
+const OSM_LINE = {
+  jinghu: '京沪高铁', jingguang: '京广高铁', hukun: '沪昆高铁', jingha: '京哈线',
+  longhai: '陇海线', jingjiu: '京九线', lanxin: '兰新高铁', chengkun: '成昆线',
+  yanshen: '杭深线', hanrong: '宁蓉线'
+};
+
+const GEOM = (function () {
+  const out = {}, real = window.LINES_REAL || {};
+  Object.keys(LINES).forEach(id => {
+    const nm = OSM_LINE[id], hit = nm && real[nm];
+    if (hit && hit.polylines && hit.polylines.length) {
+      out[id] = {
+        polylines: hit.polylines, source: 'osm', lengthKm: hit.lengthKm,
+        kind: hit.kind || 'conventional'
+      };
+    } else {
+      out[id] = {
+        polylines: [LINES[id].stations.map(s => [s[1], s[2]])],
+        source: 'straight', lengthKm: 0,
+        kind: (window.LINES_REAL && OSM_LINE[id] && window.LINES_REAL[OSM_LINE[id]])
+              ? window.LINES_REAL[OSM_LINE[id]].kind : 'conventional'
+      };
+    }
+  });
+  return out;
+})();
+
+/* ============================================================
+   Core：纯逻辑内核，不依赖 DOM 与地图 SDK
+   后续迁移小程序时整块复用
+   ============================================================ */
+const MAX_EDGE = parseFloat(window.__MAX_EDGE__ || 0.5);
+// 建图粒度：长直线段按此均分出中间顶点（见 Net.build 里的「顶点稠密化」）。
+// 简化后的折线常有 5~20km 的无顶点直线段——画图没问题，但图是靠顶点工作的，
+// 站点落在这类长段中间时就吸附不到本线，会被几百米外另一条线的顶点抢走。
+// 实测温州南就被 0.32km 外的金温线抢走，导致本该沿海（甬台温）的行程
+// 绕行金华—杭州 436km。2km 是精度与开销的折中：建图 74→268ms，图内存约 9.5MB。
+const NET_SPLIT_KM = parseFloat(window.__NET_SPLIT__ || 2);
+const MIN_RUN_KM = 25;   // 类型分段的最短长度，短于此并入相邻段（见 buildTripByStops）
+const BRIDGE_KM = 6;     // 跨连通分量的搭桥距离上限（见 Net.bridgeComponents）
+const SWITCH_KM = 8;     // 换线惩罚：抑制最短路在并行的高/普速线之间来回横跳（见 Net.path）
+// 线路偏好：非偏好类型边的里程倍率（见 Net.path）。
+// 实测标定：1.5 区分度不够（普速优先仍贴合高铁）；3 以上会为了凑类型而绕远路
+// （郑州→西安普速优先 511km 的参考值被算成 805km）。2 是甜点。
+const PREF_MULT = 2;
+
+/* ============================================================
+   车站索引：站名 -> 坐标（全国 OSM 车站，支持手动录入任意车站）
+   ============================================================ */
+const Stations = {
+  map: null, names: null,
+  init() {
+    if (this.map) return;
+    const m = new Map();
+    (window.STATIONS_ALL || '').split('\n').forEach(line => {
+      const p = line.split('|');
+      if (p.length < 3) return;
+      const lat = parseFloat(p[1]), lon = parseFloat(p[2]);
+      if (!isFinite(lat) || !isFinite(lon)) return;
+      let a = m.get(p[0]);
+      if (!a) { a = []; m.set(p[0], a); }
+      a.push([lat, lon]);
+    });
+    this.map = m;
+    this.names = Array.from(m.keys());
+  },
+  get(n) { this.init(); return this.map.get(n) || null; },
+  // 兼容「北京南站」与「北京南」两种写法
+  resolve(q) {
+    q = (q || '').trim();
+    if (!q) return null;
+    const tries = [q, q.replace(/站$/, ''), q + '站'];
+    for (const c of tries) {
+      const r = this.get(c);
+      if (r) return { name: c, pts: r };
+    }
+    return null;
+  },
+  search(q, limit) {
+    this.init();
+    limit = limit || 10;
+    q = (q || '').trim();
+    if (!q) return [];
+    const starts = [], contains = [];
+    for (let i = 0; i < this.names.length; i++) {
+      const n = this.names[i];
+      if (n === q || n.indexOf(q) === 0) starts.push(n);
+      else if (n.indexOf(q) > 0) contains.push(n);
+      if (starts.length >= limit) break;
+    }
+    return starts.concat(contains).slice(0, limit);
+  }
+};
+
+/* ============================================================
+   全路网图：把高铁网 + 普速网 + 干线几何合成一张图
+   手动录入任意车站后，直接在这张图上做最短路，天然支持跨线接续
+   ============================================================ */
+const Net = {
+  g: null,
+
+  build() {
+    if (this.g) return this.g;
+    // 端点吸附网格。0.002(200m) 太小：跨线接续点对不上，实测 14 组区间有 6 组
+    // 直接找不到路径而退化成直线。0.02(约 2.2km) 是甜点——能接上车站/枢纽处的
+    // 跨线节点，又不至于把两条独立走廊并成一条。再往上收益就衰减了。
+    const GRID = parseFloat(window.__NET_GRID__ || 0.02);
+    const pos = [], index = new Map();
+    const adj = [], adjW = [], adjK = [], adjL = [];
+    const kinds = ['highspeed', 'conventional', 'narrow'];
+    const lineNames = [], lineIdx = new Map();
+    const RAD = Math.PI / 180;
+
+    const lineId = nm => {
+      let i = lineIdx.get(nm);
+      if (i === undefined) { i = lineNames.length; lineNames.push(nm); lineIdx.set(nm, i); }
+      return i;
+    };
+    const getIdx = p => {
+      const k = Math.round(p[0] / GRID) + ',' + Math.round(p[1] / GRID);
+      let i = index.get(k);
+      if (i === undefined) {
+        i = pos.length; index.set(k, i); pos.push(p);
+        adj.push([]); adjW.push([]); adjK.push([]); adjL.push([]);
+      }
+      return i;
+    };
+    // 权重用公里而不是度：高纬度 1 度经度只有 0.64 度纬度那么长，
+    // 直接用度数当权重会让东西向路径被系统性高估
+    const kmOf = (a, b) => Math.hypot(
+      (b[0] - a[0]) * 110.574,
+      (b[1] - a[1]) * 111.320 * Math.cos((a[0] + b[0]) / 2 * RAD)
+    );
+    // 顶点稠密化：把长直线段均分成 ≤ NET_SPLIT_KM 的小段，补出中间顶点。
+    // 补点落在原直线段上（线性插值），所以**几何形状完全不变**，只是图更密：
+    //   1. 站点吸附：站点点位总能在 ~1km 内找到本线的顶点，不会被邻近线路抢走
+    //   2. 线路交汇：两条线在空间上真正交叉/并行贴近处，顶点有机会落进同一个
+    //      吸附格(GRID)而被合并成一个节点，从而接通——这正是温州南这类
+    //      "车站就是换乘点、但数据里没有共用顶点"的情形
+    const addPoly = (coords, kind, name) => {
+      if (!coords || coords.length < 2) return;
+      const k = Math.max(0, kinds.indexOf(kind));
+      const ln = lineId(name);
+      for (let i = 0; i < coords.length - 1; i++) {
+        const p0 = coords[i], p1 = coords[i + 1];
+        if (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) > MAX_EDGE) continue;
+        const parts = Math.max(1, Math.ceil(kmOf(p0, p1) / NET_SPLIT_KM));
+        let prev = p0;
+        for (let s = 1; s <= parts; s++) {
+          const next = s === parts ? p1
+            : [p0[0] + (p1[0] - p0[0]) * s / parts, p0[1] + (p1[1] - p0[1]) * s / parts];
+          const a = getIdx(prev), b = getIdx(next);
+          if (a !== b) {
+            const w = kmOf(prev, next);
+            adj[a].push(b); adjW[a].push(w); adjK[a].push(k); adjL[a].push(ln);
+            adj[b].push(a); adjW[b].push(w); adjK[b].push(k); adjL[b].push(ln);
+          }
+          prev = next;
+        }
+      }
+    };
+
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    Object.keys(hs).forEach(nm => (hs[nm].polylines || []).forEach(pl => addPoly(pl, hs[nm].kind, nm)));
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    Object.keys(cv).forEach(nm => (cv[nm].polylines || []).forEach(pl => addPoly(pl, cv[nm].kind, nm)));
+    const rl = window.LINES_REAL || {};
+    Object.keys(rl).forEach(nm => (rl[nm].polylines || []).forEach(pl => addPoly(pl, rl[nm].kind, nm)));
+
+    this.bridgeComponents(pos, adj, adjW, adjK, adjL);
+
+    this.g = { pos, adj, adjW, adjK, adjL, kinds, lineNames };
+    return this.g;
+  },
+
+  // OSM 里不少区段缺段（实测兰新线在哈密—吐鲁番之间就是断的），
+  // 单纯调大吸附网格会把两条独立走廊并成一条、扭曲几何；
+  // 这里改成定向搭桥：只把**不同连通分量**之间距离足够近的节点连起来。
+  bridgeComponents(pos, adj, adjW, adjK, adjL) {
+    const n = pos.length;
+    const parent = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+    const find = x => {
+      while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+      return x;
+    };
+    for (let i = 0; i < n; i++) {
+      for (const j of adj[i]) if (j > i) { const a = find(i), b = find(j); if (a !== b) parent[a] = b; }
+    }
+
+    const CELL = 0.06;                     // 约 6km，略大于搭桥阈值即可
+    const grid = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = Math.floor(pos[i][0] / CELL) + ',' + Math.floor(pos[i][1] / CELL);
+      let a = grid.get(k);
+      if (!a) { a = []; grid.set(k, a); }
+      a.push(i);
+    }
+    const RAD = Math.PI / 180;
+    const kmOf = (a, b) => Math.hypot(
+      (b[0] - a[0]) * 110.574,
+      (b[1] - a[1]) * 111.320 * Math.cos((a[0] + b[0]) / 2 * RAD)
+    );
+    let bridges = 0;
+    for (let i = 0; i < n; i++) {
+      const cy = Math.floor(pos[i][0] / CELL), cx = Math.floor(pos[i][1] / CELL);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const bucket = grid.get((cy + dy) + ',' + (cx + dx));
+          if (!bucket) continue;
+          for (const j of bucket) {
+            if (j <= i) continue;
+            if (find(i) === find(j)) continue;
+            const w = kmOf(pos[i], pos[j]);
+            if (w > BRIDGE_KM) continue;
+            const k = adjK[i].length ? adjK[i][0] : 1;
+            const ln = adjL[i].length ? adjL[i][0] : 0;
+            adj[i].push(j); adjW[i].push(w); adjK[i].push(k); adjL[i].push(ln);
+            adj[j].push(i); adjW[j].push(w); adjK[j].push(k); adjL[j].push(ln);
+            bridges++;
+          }
+        }
+      }
+    }
+    this._bridges = bridges;
+  },
+
+  // 站点吸附：找最近的图节点，超过 maxKm 视为附近没有线路数据
+  nearest(pt, maxKm) {
+    const g = this.build();
+    const cosl = Math.cos(pt[0] * Math.PI / 180);
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < g.pos.length; i++) {
+      const dy = (g.pos[i][0] - pt[0]) * 110.574;
+      const dx = (g.pos[i][1] - pt[1]) * 111.320 * cosl;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (maxKm && Math.sqrt(bd) > maxKm) return -1;
+    return best;
+  },
+
+  lineAt(idx) {
+    const g = this.build();
+    const arr = idx >= 0 ? g.adjL[idx] : null;
+    return (arr && arr.length) ? g.lineNames[arr[0]] : '';
+  },
+
+  // 全路网几万个节点，朴素 Dijkstra 的 O(n^2) 会直接卡死，必须上堆
+  // pref = 'highspeed' | 'conventional' | null，非偏好类型的边按倍数加价
+  path(s, t, pref) {
+    const g = this.build();
+    const n = g.pos.length;
+    if (s < 0 || t < 0 || s >= n || t >= n) return null;
+    const dist = new Float64Array(n).fill(Infinity);
+    const prev = new Int32Array(n).fill(-1);
+    const pe = new Int32Array(n).fill(-1);      // 到达该节点所用边在邻接表里的下标
+    const arrL = new Int32Array(n).fill(-1);    // 到达该节点时所处的线路
+    const done = new Uint8Array(n);
+
+    // 扁平二叉堆：一个槽占两格 —— heap[2s]=节点、heap[2s+1]=距离
+    // 槽位与数组下标混用是这里最容易写错的地方，务必按槽位算父子
+    const heap = [];
+    const slots = () => heap.length >> 1;
+    const swapSlot = (a, b) => {
+      const an = heap[2 * a], ad = heap[2 * a + 1];
+      heap[2 * a] = heap[2 * b]; heap[2 * a + 1] = heap[2 * b + 1];
+      heap[2 * b] = an; heap[2 * b + 1] = ad;
+    };
+    const hpush = (node, d) => {
+      heap.push(node, d);
+      let s = slots() - 1;
+      while (s > 0) {
+        const p = (s - 1) >> 1;
+        if (heap[2 * p + 1] <= heap[2 * s + 1]) break;
+        swapSlot(p, s);
+        s = p;
+      }
+    };
+    const hpop = () => {
+      const rn = heap[0], rd = heap[1];
+      const ld = heap.pop(), ln = heap.pop();     // 后进先出：先弹距离，再弹节点
+      if (heap.length) {
+        heap[0] = ln; heap[1] = ld;
+        let s = 0;
+        for (;;) {
+          const l = 2 * s + 1, r = 2 * s + 2;
+          let m = s;
+          if (l < slots() && heap[2 * l + 1] < heap[2 * m + 1]) m = l;
+          if (r < slots() && heap[2 * r + 1] < heap[2 * m + 1]) m = r;
+          if (m === s) break;
+          swapSlot(s, m);
+          s = m;
+        }
+      }
+      return [rn, rd];
+    };
+
+    dist[s] = 0; hpush(s, 0);
+    while (heap.length) {
+      const pair = hpop();
+      const u = pair[0], d = pair[1];
+      if (done[u] || d > dist[u]) continue;
+      done[u] = 1;
+      if (u === t) break;
+      const av = g.adj[u], aw = g.adjW[u], al = g.adjL[u], ak = g.adjK[u];
+      const cur = arrL[u];
+      for (let i = 0; i < av.length; i++) {
+        // 换线惩罚：高铁与普速常在同一走廊并行，纯按里程最短路会在两线间反复横跳。
+        // 真实的车不会这么开，所以每次换线额外计一段代价，路径自然倾向于走同一条线。
+        // 类型偏好用**乘法**而不是禁止：全程没有高铁时仍能沿普速走通，只是优先度低。
+        const mult = (pref && g.kinds[ak[i]] !== pref) ? PREF_MULT : 1;
+        const w = aw[i] * mult + ((cur >= 0 && al[i] !== cur) ? SWITCH_KM : 0);
+        const v = av[i], nd = d + w;
+        if (nd < dist[v]) { dist[v] = nd; prev[v] = u; pe[v] = i; arrL[v] = al[i]; hpush(v, nd); }
+      }
+    }
+    if (!isFinite(dist[t])) return null;
+
+    const nodes = [];
+    for (let c = t; c !== -1; c = prev[c]) nodes.push(c);
+    nodes.reverse();
+    const ks = [], ls = [];
+    let trueKm = 0;
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const u = nodes[i], v = nodes[i + 1], ei = pe[v];
+      ks.push(ei >= 0 ? g.kinds[g.adjK[u][ei]] : 'conventional');
+      ls.push(ei >= 0 ? g.lineNames[g.adjL[u][ei]] : '');
+      // dist[t] 含换线惩罚，不能拿来当里程；这里重算真实长度
+      const a = g.pos[u], b = g.pos[v];
+      trueKm += Math.hypot((b[0] - a[0]) * 110.574,
+                           (b[1] - a[1]) * 111.320 * Math.cos((a[0] + b[0]) / 2 * Math.PI / 180));
+    }
+    return { nodes, kinds: ks, lines: ls, km: trueKm };
+  }
+};
+
+const Core = {
+  haversine(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
+    const la1 = a[0] * rad, la2 = b[0] * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  },
+
+  // 从任意文本中提取车次号
+  parseTrainCodes(text) {
+    const re = /\b([GDCZKTLY]\s?\d{1,4})\b/gi;
+    const out = [], seen = {};
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const code = m[1].replace(/\s/g, '').toUpperCase();
+      if (!seen[code]) { seen[code] = 1; out.push(code); }
+    }
+    return out;
+  },
+
+  // 取该线路最长的一条连续轨迹作为主线
+  mainCoords(lineId) {
+    return GEOM[lineId].polylines.reduce((a, b) => (b.length > a.length ? b : a), []);
+  },
+
+  // ---- 方案 B+：在该线路自己的分段图上做最短路追踪 ----
+  // OSM 里上下行正线是分开画的，单纯投影会被并行的反向轨道带走，
+  // 所以只在"这条线的所有分段"构成的小图上搜索，天然选中正确方向。
+  _graphs: {},
+
+  buildLineGraph(lineId) {
+    if (this._graphs[lineId]) return this._graphs[lineId];
+    // 端点吸附：相邻分段被 Douglas-Peucker 各自简化后，共用端点会错开几十米，
+    // 量化到 200m 网格可重新吸附为同一节点；同时也是 zero-cost 的容差 merge。
+    const GRID = 0.002;
+    const qkey = p => Math.round(p[0] / GRID) + ',' + Math.round(p[1] / GRID);
+    const pos = [], index = new Map(), adj = [];
+    const getIdx = p => {
+      const k = qkey(p);
+      let i = index.get(k);
+      if (i === undefined) { i = pos.length; index.set(k, i); pos.push(p); adj.push([]); }
+      return i;
+    };
+    GEOM[lineId].polylines.forEach(coords => {
+      for (let i = 0; i < coords.length - 1; i++) {
+        const d = Math.hypot(coords[i][0] - coords[i + 1][0], coords[i][1] - coords[i + 1][1]);
+        // d 的单位是度，1 度约 111km。平原上高铁一段直线就可能有二三十公里，
+        // 阈值压得过低会把真实路段当成异常飞线剔掉，反而制造断点；
+        // 实测 55km(0.5) 是精度与容错的最佳点。
+        if (d > MAX_EDGE) continue;
+        const a = getIdx(coords[i]), b = getIdx(coords[i + 1]);
+        adj[a].push([b, d]);
+        adj[b].push([a, d]);
+      }
+    });
+    this._graphs[lineId] = { pos, adj };
+    return this._graphs[lineId];
+  },
+
+  nearestNode(g, pt) {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < g.pos.length; i++) {
+      const d = (g.pos[i][0] - pt[0]) ** 2 + (g.pos[i][1] - pt[1]) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  },
+
+  // 点数只有几百，朴素 Dijkstra 足够快
+  shortestPath(g, s, t) {
+    const n = g.pos.length;
+    const dist = new Array(n).fill(Infinity);
+    const prev = new Array(n).fill(-1);
+    const done = new Array(n).fill(false);
+    dist[s] = 0;
+    for (; ;) {
+      let u = -1, bd = Infinity;
+      for (let i = 0; i < n; i++) if (!done[i] && dist[i] < bd) { bd = dist[i]; u = i; }
+      if (u === -1 || u === t) break;
+      done[u] = true;
+      for (const [v, w] of g.adj[u]) {
+        if (dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; }
+      }
+    }
+    if (dist[t] === Infinity) return null;
+    const path = [];
+    for (let c = t; c !== -1; c = prev[c]) path.push(c);
+    return path.reverse();
+  },
+
+  // 逐段串联：站1->站2、站2->站3 各跑一次最短路，再拼起来
+  // gaps 记录有多少段没找到连通路径（这些位置最终会用直线兜住，界面上要如实标注）
+  traceByStops(lineId, stops) {
+    const g = this.buildLineGraph(lineId);
+    const coords = [];
+    let gaps = 0;
+    for (let i = 0; i < stops.length - 1; i++) {
+      const s = this.nearestNode(g, [stops[i][1], stops[i][2]]);
+      const t = this.nearestNode(g, [stops[i + 1][1], stops[i + 1][2]]);
+      const p = this.shortestPath(g, s, t);
+      if (!p) { gaps++; continue; }
+      p.forEach((k, n) => {
+        if (i > 0 && n === 0) return;  // 跳过与上一段重复的首点
+        coords.push(g.pos[k]);
+      });
+    }
+    return { coords, gaps };
+  },
+
+  // 车次 -> 乘坐区段几何
+  buildTrip(trainCode) {
+    const t = TRAINS[trainCode];
+    if (!t) return null;
+    const line = LINES[t.line];
+    const names = line.stations.map(s => s[0]);
+    let i = names.indexOf(t.from), j = names.indexOf(t.to);
+    if (i < 0 || j < 0) return null;
+    if (i > j) { const k = i; i = j; j = k; }
+    const stops = line.stations.slice(i, j + 1);
+
+    let coords = stops.map(s => [s[1], s[2]]);
+    let source = GEOM[t.line].source;
+    if (source === 'osm') {
+      const tr = this.traceByStops(t.line, stops);
+      let trKm = 0, lineKm = 0;
+      for (let k = 0; k < tr.coords.length - 1; k++) trKm += this.haversine(tr.coords[k], tr.coords[k + 1]);
+      for (let k = 0; k < stops.length - 1; k++) {
+        lineKm += this.haversine([stops[k][1], stops[k][2]], [stops[k + 1][1], stops[k + 1][2]]);
+      }
+      // 追踪结果短于直线里程的 70%，说明线路数据在该区段不完整，回退示意直线
+      if (tr.coords.length >= 2 && trKm > lineKm * 0.7) {
+        coords = tr.coords;
+        if (tr.gaps) source = 'osm-partial';
+      } else {
+        source = 'straight-fallback';
+      }
+    }
+
+    let km = 0;
+    for (let k = 0; k < coords.length - 1; k++) km += this.haversine(coords[k], coords[k + 1]);
+    return {
+      code: trainCode, lineId: t.line, lineName: line.name, source,
+      from: stops[0][0], to: stops[stops.length - 1][0],
+      stops, coords, km: Math.round(km),
+      segs: [{ kind: GEOM[t.line].kind || 'conventional', coords }],
+      segKey: t.line + ':' + stops[0][0] + '>' + stops[stops.length - 1][0]
+    };
+  },
+
+  // ---- 12306 短信：不只取车次号，还要把「A 至 B」抓出来 ----
+  // 只认车次号的话，停运/改线的车次就查不到了；直接从短信里取站名更可靠
+  parseSms(text) {
+    const re = /([GDCZKTLY]\s?\d{1,4})/gi;
+    const ms = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      ms.push({ code: m[1].replace(/\s/g, '').toUpperCase(), idx: m.index, len: m[0].length });
+    }
+    return ms.map((x, i) => {
+      const end = i + 1 < ms.length ? ms[i + 1].idx : text.length;
+      const r = this.parseRoute(text.slice(x.idx + x.len, end));
+      // 日期写在车次前面（「5月1日 G1 次」），往前回看一小段抓下来，
+      // 同一车次不同日期才不会被当成重复行程
+      const dm = text.slice(Math.max(0, x.idx - 24), x.idx).match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+      return { code: x.code, from: r && r.from, to: r && r.to, date: dm ? (dm[1] + '月' + dm[2] + '日') : '' };
+    });
+  },
+
+  // 用分隔符切段再取邻近的汉字串，比正则硬匹配稳：
+  // 「 次 北京南 至 上海虹桥 列车…」里的「次」不会被误当成站名的一部分
+  parseRoute(seg) {
+    const parts = seg.split(/\s*(?:至|到|—|–|－|-|→|->)\s*/);
+    if (parts.length < 2) return null;
+    const runs = s => s.match(/[\u4e00-\u9fff]{2,10}/g) || [];
+    for (let i = 0; i < parts.length - 1; i++) {
+      const a = runs(parts[i]), b = runs(parts[i + 1]);
+      if (!a.length || !b.length) continue;
+      const from = a[a.length - 1], to = b[0];
+      if (Stations.resolve(from) && Stations.resolve(to)) return { from, to };
+    }
+    return null;
+  },
+
+  // 站名 -> 带坐标的站点。同名多站时按「相邻已定站点就近」消歧，
+  // 实在分不出来（彼此很远又没有参照）才抛给界面让用户选
+  resolveStops(names, override) {
+    const raw = names.map(n => Stations.resolve(n));
+    const missing = [];
+    raw.forEach((r, i) => { if (!r) missing.push(names[i]); });
+    if (missing.length) return { error: '车站库里没有：' + missing.join('、') };
+
+    const picked = new Array(raw.length).fill(null);
+    raw.forEach((r, i) => {
+      const ov = override && override[r.name];
+      if (ov) { picked[i] = ov; return; }
+      if (r.pts.length === 1) picked[i] = r.pts[0];
+    });
+
+    const near = (i, ctx) => {
+      let best = null, bd = Infinity;
+      raw[i].pts.forEach(p => {
+        const d = this.haversine(ctx, p);
+        if (d < bd) { bd = d; best = p; }
+      });
+      return best;
+    };
+    const ctxOf = i => {
+      for (let j = i - 1; j >= 0; j--) if (picked[j]) return picked[j];
+      for (let j = i + 1; j < raw.length; j++) if (picked[j]) return picked[j];
+      return null;
+    };
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < raw.length; i++) {
+        if (picked[i]) continue;
+        const ctx = ctxOf(i);
+        if (ctx) picked[i] = near(i, ctx);
+      }
+    }
+
+    const ambiguous = [];
+    raw.forEach((r, i) => {
+      if (picked[i]) return;
+      const pts = r.pts;
+      let spread = 0;
+      for (let a = 0; a < pts.length; a++) {
+        for (let b = a + 1; b < pts.length; b++) {
+          spread = Math.max(spread, this.haversine(pts[a], pts[b]));
+        }
+      }
+      if (spread <= 30) { picked[i] = pts[0]; return; }   // 彼此很近，随便取一个都行
+      const opts = pts.slice(0, 8).map(p => ({
+        pt: p, hint: Net.lineAt(Net.nearest(p, 30))
+      }));
+      ambiguous.push({ name: r.name, opts });
+    });
+    if (ambiguous.length) return { ambiguous };
+    return { stops: names.map((n, i) => [raw[i].name, picked[i][0], picked[i][1]]) };
+  },
+
+  // 按站名追踪：沿全路网图逐段跑最短路，支持跨线接续
+  // pref = 'highspeed' | 'conventional' | null（null 表示纯按里程最短）
+  buildTripByStops(names, code, override, pref) {
+    const r = this.resolveStops(names, override);
+    if (r.error || r.ambiguous) return r;
+
+    const stops = r.stops;
+    const g = Net.build();
+    const SNAP_KM = 20;
+    const segs = [];
+    const lineHit = {};
+    let gaps = 0, traced = 0;
+
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = Net.nearest([stops[i][1], stops[i][2]], SNAP_KM);
+      const b = Net.nearest([stops[i + 1][1], stops[i + 1][2]], SNAP_KM);
+      let piece = null, kinds = null;
+      if (a >= 0 && b >= 0 && a !== b) {
+        const p = Net.path(a, b, pref);
+        if (p && p.nodes.length >= 2) {
+          // 首尾补上真实站点坐标，避免站点离轨道几百米时看着"没接上"
+          piece = [[stops[i][1], stops[i][2]]]
+            .concat(p.nodes.map(k => g.pos[k]))
+            .concat([[stops[i + 1][1], stops[i + 1][2]]]);
+          kinds = [p.kinds[0]].concat(p.kinds, [p.kinds[p.kinds.length - 1]]);
+          p.lines.forEach(l => { if (l) lineHit[l] = (lineHit[l] || 0) + 1; });
+          traced++;
+        }
+      }
+      if (!piece) {
+        gaps++;
+        piece = [[stops[i][1], stops[i][2]], [stops[i + 1][1], stops[i + 1][2]]];
+        kinds = ['conventional'];
+      }
+      // 按类型切成若干段，一段一个颜色（一趟车可能前半程高铁、后半程普速）
+      let cur = [piece[0]], curKind = kinds[0];
+      for (let j = 0; j < kinds.length; j++) {
+        cur.push(piece[j + 1]);
+        const nk = kinds[j + 1];
+        if (nk !== undefined && nk !== curKind) {
+          segs.push({ kind: curKind, coords: cur });
+          cur = [piece[j + 1]]; curKind = nk;
+        }
+      }
+      segs.push({ kind: curKind, coords: cur });
+    }
+
+    // 高铁与普速常在同一走廊并行，200m 吸附网格会把两条线并到同一节点，
+    // 最短路于是在两线间反复横跳 —— 实测一趟车能切出 60+ 段，没法看。
+    // 这里把过短的段并进邻居，只保留真正成规模的类型变化。
+    const runKm = c => {
+      let s = 0;
+      for (let k = 0; k < c.length - 1; k++) s += this.haversine(c[k], c[k + 1]);
+      return s;
+    };
+    const merged = [];
+    segs.forEach(sg => {
+      const last = merged[merged.length - 1];
+      if (last && last.kind === sg.kind) {
+        last.coords = last.coords.concat(sg.coords.slice(1));
+        last.km += runKm(sg.coords);
+      } else {
+        merged.push({ kind: sg.kind, coords: sg.coords.slice(), km: runKm(sg.coords) });
+      }
+    });
+    if (merged.length > 1) {
+      for (let i = merged.length - 1; i >= 0; i--) {
+        if (merged.length <= 1) break;
+        if (merged[i].km >= MIN_RUN_KM) continue;
+        const j = i > 0 ? i - 1 : 1;
+        const tgt = merged[j], src = merged[i];
+        tgt.coords = j < i ? tgt.coords.concat(src.coords.slice(1))
+                           : src.coords.concat(tgt.coords.slice(1));
+        tgt.km += src.km;
+        merged.splice(i, 1);
+      }
+    }
+    segs.length = 0;
+    merged.forEach(m => segs.push({ kind: m.kind, coords: m.coords }));
+
+    let km = 0;
+    const coords = [];
+    const kindKm = {};
+    segs.forEach(sg => {
+      let sk = 0;
+      for (let k = 0; k < sg.coords.length - 1; k++) sk += this.haversine(sg.coords[k], sg.coords[k + 1]);
+      km += sk;
+      kindKm[sg.kind] = (kindKm[sg.kind] || 0) + sk;
+      sg.coords.forEach(p => { if (!coords.length || coords[coords.length - 1] !== p) coords.push(p); });
+    });
+
+    const top = Object.keys(lineHit).sort((x, y) => lineHit[y] - lineHit[x]).slice(0, 3);
+    const legs = stops.length - 1;
+    const source = traced === 0 ? 'straight-fallback' : (traced < legs ? 'osm-partial' : 'osm');
+
+    return {
+      code: code || '手录', lineId: null,
+      lineName: top.length ? top.join('、') : '自定义线路',
+      source, from: stops[0][0], to: stops[stops.length - 1][0],
+      stops, segs, coords, km: Math.round(km),
+      pref: pref || null, kindKm,
+      segKey: 'st:' + stops[0][0] + '>' + stops[stops.length - 1][0] +
+              (pref ? '@' + pref : '')
+    };
+  },
+
+  // 汇总统计：累计里程按次数累加，点亮里程按区段去重
+  summarize(trips) {
+    const litSegs = {}, provSet = {}, lineSet = {};
+    let totalKm = 0;
+    trips.forEach(t => {
+      totalKm += t.km;
+      litSegs[t.segKey] = t;
+      lineSet[t.lineName] = 1;
+      // 手动录入的行程没有预设线路，省份无从推断，不参与统计
+      if (t.lineId && LINES[t.lineId]) LINES[t.lineId].provinces.forEach(p => provSet[p] = 1);
+    });
+    let litKm = 0;
+    Object.keys(litSegs).forEach(k => litKm += litSegs[k].km);
+    return {
+      count: trips.length,
+      totalKm: Math.round(totalKm),
+      litKm: Math.round(litKm),
+      provinces: Object.keys(provSet).length,
+      lines: Object.keys(lineSet)
+    };
+  }
+};
+
+/* ============================================================
+   MapAdapter：腾讯地图 GL JS 实现（H5）
+   小程序端只需替换这一层的实现
+   ============================================================ */
+/* 线路类型配色：色调区分类型（高铁粉红 / 普速灰 / 窄轨褐），
+   明暗区分是否已乘坐（base=未乘坐、lit=已点亮） */
+/* 两套配色：浅色底图用「暗线」，深色底图用「亮线」，都保持
+   色调区分类型（粉=高铁 / 灰=普速 / 褐=窄轨）、明暗区分是否乘坐 */
+const THEME_COLOR = {
+  light: {
+    highspeed:    { base: '#e6a3bc', lit: '#e0407f', label: '高铁/城际' },
+    conventional: { base: '#c9ccd1', lit: '#f5a623', label: '普速铁路' },
+    narrow:       { base: '#cbb79c', lit: '#a9743c', label: '窄轨/米轨' }
+  },
+  dark: {
+    highspeed:    { base: '#b3567f', lit: '#ff6fb0', label: '高铁/城际' },
+    conventional: { base: '#5d666f', lit: '#ffb020', label: '普速铁路' },
+    narrow:       { base: '#7d6a48', lit: '#e0a860', label: '窄轨/米轨' }
+  }
+};
+let THEME = 'light';            // 线条明暗主题：light / dark（由底图类型派生）
+let BASE = 'normal';            // 底图：normal(正常) / black(纯黑) / satellite(卫星)
+let FOG = true;                 // 迷雾地图：未走过的全路网变暗，仅已坐线路高亮
+let FOCUS = false;              // 铁路专注：隐藏公路文字注记与 POI，弱化非铁路信息
+let FORCE_INVERT = false;       // 官方夜间样式不生效时的 CSS 反色兜底
+const KC = () => THEME_COLOR[THEME];   // 取当前主题配色
+// 底图类型 -> 线条明暗主题：正常图用浅色线条，纯黑/卫星用亮色线条
+const themeOfBase = b => (b === 'normal' ? 'light' : 'dark');
+// 把 #rrggbb 转成带透明度的 rgba（迷雾地图用于压暗未走线路）
+function hexA(hex, a) {
+  const h = (hex || '#888888').replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+}
+
+const MapAdapter = {
+  map: null, baseLayer: null, glowLayer: null, litLayer: null, stationLayer: null,
+  // 高铁路网 / 普速路网拆成独立图层，才能单独控制显隐
+  hsLayer: null, convLayer: null,
+  netVisible: { hs: true, conv: true },
+
+  init() {
+    // 恢复上次的偏好（兼容旧版 RW_THEME）
+    try {
+      const b = localStorage.getItem('RW_BASE');
+      if (b === 'normal' || b === 'black' || b === 'satellite') BASE = b;
+      else if (localStorage.getItem('RW_THEME') === 'dark') BASE = 'black';
+      if (localStorage.getItem('RW_FOG') === '0') FOG = false;
+      else if (localStorage.getItem('RW_FOG') === '1') FOG = true;
+      if (localStorage.getItem('RW_FOCUS') === '1') FOCUS = true;
+      if (localStorage.getItem('RW_INVERT') === '1') FORCE_INVERT = true;
+    } catch (e) {}
+    THEME = themeOfBase(BASE);
+    this.syncThemeClass();
+
+    const opts = {
+      center: new TMap.LatLng(34.5, 108.0),
+      zoom: 4.6,
+      pitch: 0,
+      baseMap: BASE === 'satellite' ? { type: 'satellite' } : { type: 'vector' }
+    };
+    // style2 = 官方「墨渊」夜间底图（纯黑底图用）；若该 key 未开通个性化地图，底图会保持浅色，
+    // 此时可勾选面板里的「强制反色」用 CSS 把底图压暗
+    if (BASE !== 'satellite' && THEME === 'dark') opts.mapStyleId = 'style2';
+    this.map = new TMap.Map('map', opts);
+    this.applyFocus();
+
+    this._geoms = { base: [], hs: [], conv: [] };
+    const baseGeoms = this._geoms.base;
+    let nbase = 0;
+    Object.keys(GEOM).forEach(id => {
+      const kind = GEOM[id].kind || 'conventional';
+      GEOM[id].polylines.forEach(pl => {
+        baseGeoms.push({
+          id: 'b' + (nbase++), styleId: 'base_' + kind,
+          paths: pl.map(p => new TMap.LatLng(p[0], p[1]))
+        });
+      });
+    });
+    this.baseLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: this.netStyles(),
+      geometries: baseGeoms
+    });
+
+    // 全路网高铁：由 OSM highspeed=yes 自动筛出
+    const hsGeoms = this._geoms.hs;
+    let hsN = 0;
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    Object.keys(hs).forEach(nm => {
+      const kind = hs[nm].kind || 'highspeed';
+      hs[nm].polylines.forEach(pl => {
+        hsGeoms.push({
+          id: 'h' + (hsN++), styleId: 'net_' + kind,
+          paths: pl.map(p => new TMap.LatLng(p[0], p[1]))
+        });
+      });
+    });
+    this.hsLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: this.netStyles(),
+      geometries: hsGeoms
+    });
+
+    // 全路网普速：由 OSM highspeed!=yes 自动筛出（已排除与高铁同名的线路）
+    const convGeoms = this._geoms.conv;
+    let cvN = 0;
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    Object.keys(cv).forEach(nm => {
+      const kind = cv[nm].kind || 'conventional';
+      cv[nm].polylines.forEach(pl => {
+        convGeoms.push({
+          id: 'c' + (cvN++), styleId: 'net_' + kind,
+          paths: pl.map(p => new TMap.LatLng(p[0], p[1]))
+        });
+      });
+    });
+    this.convLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: this.netStyles(),
+      geometries: convGeoms
+    });
+
+    this.glowLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: 14, borderWidth: 0, lineCap: 'round' }) },
+      geometries: []
+    });
+    this.litLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: this.litStyles(),
+      geometries: []
+    });
+
+    const dotLit = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='7' cy='7' r='5' fill='%23f5a623' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E";
+    const dotDim = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='%23b9bec6' stroke='%23ffffff' stroke-width='1.5'/%3E%3C/svg%3E";
+    this.stationLayer = new TMap.MultiMarker({
+      map: this.map,
+      styles: {
+        lit: new TMap.MarkerStyle({ width: 14, height: 14, src: dotLit, anchor: { x: 7, y: 7 } }),
+        dim: new TMap.MarkerStyle({ width: 10, height: 10, src: dotDim, anchor: { x: 5, y: 5 } })
+      },
+      geometries: []
+    });
+  },
+
+  ready() { return !!this.map; },
+
+  // 底图网样式（base_=行程线所在线路，net_=全路网）
+  netStyles() {
+    const C = KC(); const s = {};
+    Object.keys(C).forEach(k => {
+      if (FOG) {
+        // 迷雾地图：未走过的全路网压暗，仅已坐线路（lit 图层）保持高亮
+        s['base_' + k] = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.22), width: 1.5, borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.16), width: 1.2, borderWidth: 0, lineCap: 'round' });
+      } else {
+        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: 3, borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: 2, borderWidth: 0, lineCap: 'round' });
+      }
+    });
+    return s;
+  },
+  litStyles() {
+    const C = KC(); const s = {};
+    Object.keys(C).forEach(k => {
+      s['lit_' + k] = new TMap.PolylineStyle({ color: C[k].lit, width: 5, borderWidth: 0, lineCap: 'round' });
+    });
+    return s;
+  },
+  glowColor() { return THEME === 'dark' ? 'rgba(255,176,32,0.30)' : 'rgba(245,166,35,0.22)'; },
+
+  syncThemeClass() {
+    document.body.classList.toggle('dark', THEME === 'dark');
+    document.body.classList.toggle('force-invert', THEME === 'dark' && FORCE_INVERT);
+  },
+
+  // 销毁并重建全部折线图层（复用已构造的 geometries，开销极小）。
+  // 主题 / 底图 / 迷雾切换都会改样式，统一走这里，并恢复路网显隐与已点亮线路。
+  _rebuildLayers() {
+    ['baseLayer', 'hsLayer', 'convLayer', 'glowLayer', 'litLayer'].forEach(name => {
+      const old = this[name];
+      if (old) { try { old.setMap(null); } catch (e) {} }
+    });
+    this.baseLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.base });
+    this.hsLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.hs });
+    this.convLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.conv });
+    this.glowLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: 14, borderWidth: 0, lineCap: 'round' }) },
+      geometries: (this._lastGlow || [])
+    });
+    this.litLayer = new TMap.MultiPolyline({ map: this.map, styles: this.litStyles(), geometries: (this._lastLit || []) });
+    this.setNetVisible('hs', this.netVisible.hs);
+    this.setNetVisible('conv', this.netVisible.conv);
+    if (this._lastTrips) this.render(this._lastTrips);
+  },
+
+  // 切换明暗。底图样式若支持热切换就即时生效，否则提示刷新
+  setTheme(next) {
+    if (next === THEME) return { ok: true, reload: false };
+    THEME = next;
+    this.syncThemeClass();
+    try { localStorage.setItem('RW_THEME', THEME); } catch (e) {}
+    let hot = false;
+    try {
+      if (this.map && typeof this.map.setMapStyleId === 'function') {
+        this.map.setMapStyleId(THEME === 'dark' ? 'style2' : 'style1');
+        hot = true;
+      }
+    } catch (e) { hot = false; }
+    this._rebuildLayers();
+    return { ok: true, reload: !hot };
+  },
+
+  // 切换底图：正常 / 纯黑 / 卫星。线条明暗主题随底图自动派生。
+  setBase(type) {
+    if (type !== 'normal' && type !== 'black' && type !== 'satellite') return;
+    BASE = type;
+    THEME = themeOfBase(BASE);
+    this.syncThemeClass();
+    try { localStorage.setItem('RW_BASE', BASE); } catch (e) {}
+    this.applyFocus();
+    this._rebuildLayers();
+  },
+
+  // 铁路专注：弱化公路文字注记与 POI。矢量图剔掉 label/point，卫星图只留影像底面。
+  applyFocus() {
+    try {
+      if (BASE === 'satellite') {
+        this.map.setBaseMap(FOCUS ? { type: 'satellite', features: ['base'] } : { type: 'satellite' });
+      } else {
+        this.map.setBaseMap(FOCUS ? { type: 'vector', features: ['base', 'building2d'] } : { type: 'vector' });
+        if (typeof this.map.setMapStyleId === 'function') this.map.setMapStyleId(BASE === 'black' ? 'style2' : 'style1');
+      }
+    } catch (e) {}
+  },
+  setFocus(on) {
+    FOCUS = !!on;
+    try { localStorage.setItem('RW_FOCUS', FOCUS ? '1' : '0'); } catch (e) {}
+    this.applyFocus();
+  },
+
+  // 迷雾地图：未走过的全路网压暗，仅已坐线路保持高亮
+  setFog(on) {
+    FOG = !!on;
+    try { localStorage.setItem('RW_FOG', FOG ? '1' : '0'); } catch (e) {}
+    this._rebuildLayers();
+  },
+
+  // 切换高铁路网 / 普速路网显隐。
+  // TMap 的 MultiPolyline 没有稳定的 setVisible 接口，用 setMap(null) 摘除最可靠
+  setNetVisible(which, on) {
+    this.netVisible[which] = !!on;
+    const layer = which === 'hs' ? this.hsLayer : this.convLayer;
+    if (layer) layer.setMap(on ? this.map : null);
+  },
+
+  render(trips) {
+    if (!this.ready()) return;
+    const litStations = {};
+    const litGeoms = [];
+    trips.forEach((t, idx) => {
+      // 一趟行程可能跨类型（前半程高铁、后半程普速），按类型拆成多段分别着色
+      const segs = (t.segs && t.segs.length) ? t.segs
+        : [{ kind: (GEOM[t.lineId] && GEOM[t.lineId].kind) || 'conventional', coords: t.coords }];
+      segs.forEach((sg, j) => {
+        if (!sg.coords || sg.coords.length < 2) return;
+        litGeoms.push({
+          id: 'lit_' + idx + '_' + j, styleId: 'lit_' + (sg.kind || 'conventional'),
+          paths: sg.coords.map(p => new TMap.LatLng(p[0], p[1]))
+        });
+      });
+      t.stops.forEach(s => litStations[s[0]] = s);
+    });
+    // 缓存下来，主题切换重建图层时可原样恢复
+    this._lastTrips = trips;
+    this._lastLit = litGeoms;
+    this._lastGlow = litGeoms.map(g => ({ ...g, styleId: 'glow' }));
+    this.litLayer.setGeometries(litGeoms);
+    this.glowLayer.setGeometries(this._lastGlow);
+
+    const marks = [];
+    const inLines = {};
+    let n = 0;
+    Object.keys(LINES).forEach(id => {
+      LINES[id].stations.forEach(s => {
+        inLines[s[0]] = 1;
+        marks.push({
+          id: 'm' + (n++), styleId: litStations[s[0]] ? 'lit' : 'dim',
+          position: new TMap.LatLng(s[1], s[2])
+        });
+      });
+    });
+    // 手动录入的车站不在预设线路表里，也要打点出来
+    Object.keys(litStations).forEach(nm => {
+      if (inLines[nm]) return;
+      const s = litStations[nm];
+      marks.push({ id: 'm' + (n++), styleId: 'lit', position: new TMap.LatLng(s[1], s[2]) });
+    });
+    this.stationLayer.setGeometries(marks);
+  },
+
+  focusTrip(trip) {
+    if (!this.ready()) return;
+    // 算不出路径的行程没有坐标，点它别把地图带崩
+    if (!trip.coords || trip.coords.length < 2) return;
+    const pts = trip.coords.map(p => new TMap.LatLng(p[0], p[1]));
+    try {
+      const bounds = new TMap.LatLngBounds(pts[0], pts[0]);
+      pts.forEach(p => bounds.extend(p));
+      this.map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 340, right: 80 } });
+    } catch (e) {
+      this.map.setCenter(pts[Math.floor(pts.length / 2)]);
+      this.map.setZoom(6);
+    }
+  },
+
+  resetView() {
+    this.map.setCenter(new TMap.LatLng(34.5, 108.0));
+    this.map.setZoom(4.6);
+  }
+};
+
+/* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
+   注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
+const APP_VERSION = '0.3.0';
+const APP_DATE = '2026-10-08';
+
+/* ============================================================
+   Store：行程存档（本机持久化 + 多档案 + 导出导入）
+
+   只存「源数据」(intent)：出发/到达/经停/车次/偏好/日期，约 100 字节一条；
+   路径几何与里程在加载时用 Core 现算——存档小得多，而且路网数据升级后
+   老行程会自动重算成更准的线位。
+
+   将来接多用户（微信云开发 / 自建后端）只需替换本模块的实现，
+   上层业务代码一行都不用动。
+   ============================================================ */
+const Store = {
+  VER: 1,
+  _cur: 'default',
+
+  init() {
+    try {
+      const c = localStorage.getItem('RW_CUR_PROFILE');
+      if (c) this._cur = c;
+      const ps = this.profiles();
+      if (ps.indexOf(this._cur) < 0) {
+        ps.push(this._cur);
+        localStorage.setItem('RW_PROFILES', JSON.stringify(ps));
+      }
+    } catch (e) {}
+    return this._cur;
+  },
+
+  profiles() {
+    try {
+      const v = JSON.parse(localStorage.getItem('RW_PROFILES') || '["default"]');
+      return (v && v.length) ? v : ['default'];
+    } catch (e) { return ['default']; }
+  },
+
+  cur() { return this._cur; },
+  key(name) { return 'RW_TRIPS_V1::' + (name || this._cur); },
+
+  use(name) {
+    this._cur = name || 'default';
+    try { localStorage.setItem('RW_CUR_PROFILE', this._cur); } catch (e) {}
+  },
+
+  create(name) {
+    name = (name || '').trim();
+    if (!name) return { error: '请输入档案名' };
+    const ps = this.profiles();
+    if (ps.indexOf(name) >= 0) return { error: '已存在同名档案' };
+    ps.push(name);
+    try {
+      localStorage.setItem('RW_PROFILES', JSON.stringify(ps));
+      localStorage.setItem(this.key(name), JSON.stringify({ v: this.VER, items: [] }));
+    } catch (e) { return { error: '写入失败：' + e.message }; }
+    return { ok: true };
+  },
+
+  remove(name) {
+    const ps = this.profiles();
+    if (ps.length <= 1) return { error: '至少保留一个档案' };
+    const i = ps.indexOf(name);
+    if (i < 0) return { error: '档案不存在' };
+    ps.splice(i, 1);
+    try {
+      localStorage.setItem('RW_PROFILES', JSON.stringify(ps));
+      localStorage.removeItem(this.key(name));
+    } catch (e) { return { error: '删除失败：' + e.message }; }
+    return { ok: true };
+  },
+
+  load() {
+    try {
+      const raw = localStorage.getItem(this.key());
+      if (!raw) return [];
+      const d = JSON.parse(raw);
+      const items = (d && d.items) ? d.items : (Array.isArray(d) ? d : []);
+      return items.filter(x => x && (x.code || (x.from && x.to)));
+    } catch (e) { return []; }
+  },
+
+  save(items) {
+    try {
+      localStorage.setItem(this.key(), JSON.stringify({
+        v: this.VER, updatedAt: Date.now(), items: items || []
+      }));
+      return { ok: true };
+    } catch (e) {
+      return { error: (e && e.name === 'QuotaExceededError') ? '本机存储已满，请先导出备份再清理' : ('保存失败：' + e.message) };
+    }
+  },
+
+  dump(profile, items) {
+    return {
+      app: 'railway-footprint', v: this.VER,
+      appVer: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : ''),
+      profile: profile || this._cur,
+      exportedAt: new Date().toISOString(),
+      count: (items || []).length, items: items || []
+    };
+  },
+
+  // 兼容三种格式：单档案导出 / 全部档案导出 / 裸数组
+  parse(text) {
+    let d;
+    try { d = JSON.parse(text); } catch (e) { return { error: '不是合法的 JSON 文件' }; }
+    if (d && Array.isArray(d.profiles)) return { profiles: d.profiles };
+    if (d && Array.isArray(d.items)) return { profile: d.profile || '导入', items: d.items };
+    if (Array.isArray(d)) return { profile: '导入', items: d };
+    return { error: '文件里没有行程数据' };
+  }
+};
+
+/* ============================================================
+   App：UI 粘合层（H5 专用）
+   ============================================================ */
+const App = {
+  items: [],   // 源数据，存档里存的就是这些
+  trips: [],   // 渲染结果，由 items 现算得出
+
+  init() {
+    try {
+      MapAdapter.init();
+    } catch (e) {
+      console.error('[地图初始化失败]', e);
+      document.getElementById('map').innerHTML =
+        '<div style="padding:40px;color:#888;font-size:13px;">地图组件加载失败，左侧面板功能仍可正常使用</div>';
+    }
+    const sel = document.getElementById('trainSel');
+    Object.keys(TRAINS).forEach(code => {
+      const o = document.createElement('option');
+      o.value = code;
+      o.textContent = code + '  ' + TRAINS[code].from + ' — ' + TRAINS[code].to;
+      sel.appendChild(o);
+    });
+    const realN = Object.keys(GEOM).filter(k => GEOM[k].source === 'osm').length;
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    const hsMain = Object.keys(hs).filter(k => !hs[k].isLink && hs[k].lengthKm >= 25);
+    const cvMain = Object.keys(cv).filter(k => !cv[k].isLink && cv[k].lengthKm >= 40);
+    const setTxt = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n ? '（' + n + ' 条）' : ''; };
+    setTxt('nHs', hsMain.length);
+    setTxt('nConv', cvMain.length);
+    Stations.init();
+    this.bindStationInputs();
+    Store.init();
+    this.items = Store.load();
+    this._syncArchUI();
+    const badN = this.rebuild();
+    if (badN) setTimeout(() =>
+      this.toast('有 ' + badN + ' 条行程暂时算不出路径（站名或线路数据有变动）'), 1200);
+    try { this._pref = localStorage.getItem('RW_PREF') || null; } catch (e) {}
+    this.setPref(this._pref || '', true);
+    const stN = Stations.names.length;
+    const stEl = document.getElementById('nSt');
+    if (stEl) stEl.textContent = stN ? '（' + stN.toLocaleString() + ' 站）' : '';
+    this.syncThemeUI();
+    const vl = document.getElementById('verLine');
+    if (vl) vl.textContent = '铁路足迹 v' + APP_VERSION + ' · ' + APP_DATE;
+    document.getElementById('meta').innerHTML =
+      '路网底图：高铁 <b style="color:#185FA5;">' + hsMain.length + '</b> 条 + ' +
+      '普速 <b style="color:#185FA5;">' + cvMain.length + '</b> 条（OSM 自动筛选）&nbsp;|&nbsp; ' +
+      '车站库 <b style="color:#185FA5;">' + stN.toLocaleString() + '</b> 站';
+    this.refresh();
+  },
+
+  // ---- 手动录入车站 ----
+  bindStationInputs() {
+    ['stFrom', 'stTo', 'stVia'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => this.showSug(id));
+      el.addEventListener('focus', () => this.showSug(id));
+      el.addEventListener('blur', () => setTimeout(() => this.hideSug(), 200));
+      el.addEventListener('keydown', e => { if (e.key === 'Enter') this.addByStations(); });
+    });
+  },
+
+  currentToken(id) {
+    const v = document.getElementById(id).value || '';
+    if (id !== 'stVia') return v.trim();
+    const parts = v.split(/[,，、\s]+/);
+    return (parts[parts.length - 1] || '').trim();
+  },
+
+  showSug(id) {
+    const box = document.getElementById('stSug');
+    if (!box) return;
+    const q = this.currentToken(id);
+    if (!q) { box.style.display = 'none'; return; }
+    const list = Stations.search(q, 10);
+    box.innerHTML = list.length
+      ? list.map(n => '<div onclick=\'App.applySug("' + id + '","' + n + '")\'>' + n + '</div>').join('')
+      : '<div class="none">车站库里没有匹配的站</div>';
+    box.style.display = 'block';
+  },
+
+  hideSug() {
+    const box = document.getElementById('stSug');
+    if (box) box.style.display = 'none';
+  },
+
+  applySug(id, name) {
+    const el = document.getElementById(id);
+    if (id === 'stVia') {
+      const parts = (el.value || '').split(/[,，、\s]+/);
+      parts[parts.length - 1] = name;
+      el.value = parts.filter(Boolean).join(' ') + ' ';
+    } else {
+      el.value = name;
+    }
+    this.hideSug();
+    el.focus();
+  },
+
+  // 线路偏好：'highspeed' | 'conventional' | ''（自动择路）
+  setPref(p, silent) {
+    this._pref = p || null;
+    try { localStorage.setItem('RW_PREF', this._pref || ''); } catch (e) {}
+    const cur = this._pref || '';
+    [['pfAuto', ''], ['pfHs', 'highspeed'], ['pfCv', 'conventional']].forEach(pair => {
+      const el = document.getElementById(pair[0]);
+      if (el) el.classList.toggle('on', pair[1] === cur);
+    });
+    if (!silent) {
+      this.toast(p === 'highspeed' ? '已切到高铁优先' : (p === 'conventional' ? '已切到普速优先' : '已切到自动择路'));
+    }
+  },
+
+  // 偏好没被满足时（区间根本没有那条线），如实告诉用户，别让他以为选错了
+  prefWarn(r) {
+    if (!r.pref || !r.km) return '';
+    const got = (r.kindKm && r.kindKm[r.pref]) || 0;
+    if (got / r.km >= 0.5) return '';
+    return '（该区间没有' + (r.pref === 'highspeed' ? '高铁' : '普速') + '线路，按实际可走的算）';
+  },
+
+  addByStations() {
+    const from = (document.getElementById('stFrom').value || '').trim();
+    const to = (document.getElementById('stTo').value || '').trim();
+    const viaRaw = (document.getElementById('stVia').value || '').trim();
+    if (!from || !to) return this.toast('请填写出发站和到达站');
+    const via = viaRaw ? viaRaw.split(/[,，、\s]+/).filter(Boolean) : [];
+    const names = [from].concat(via, [to]);
+    const r = Core.buildTripByStops(names, '', this._stOverride, this._pref);
+    if (r.error) return this.toast(r.error);
+    if (r.ambiguous) { this.showPick(r.ambiguous); return this.toast('有多个同名车站，请选择'); }
+    // 只保存与本次行程相关的同名站消歧结果，别把整张 override 表写进存档
+    const ov = {};
+    if (this._stOverride) names.forEach(n => { if (this._stOverride[n]) ov[n] = this._stOverride[n]; });
+    const t = this.addItem({
+      kind: 'stops', from, via, to, code: '', pref: this._pref || null,
+      ov: Object.keys(ov).length ? ov : null, date: '', createdAt: Date.now()
+    });
+    if (!t) return;
+    const tag = t.source.indexOf('straight') === 0 ? '（附近无线路数据，用直线示意）'
+      : (t.source === 'osm' ? '（沿真实轨道）' : '（部分区段无数据）');
+    this.toast('已保存 ' + t.from + '→' + t.to + ' ' + t.km + 'km ' + (this.prefWarn(t) || tag));
+  },
+
+  showPick(list) {
+    const box = document.getElementById('stPick');
+    if (!box) return;
+    box.innerHTML = list.map(a =>
+      '<div class="pick"><span class="tip">「' + a.name + '」在车站库里有多个同名站，点选一个：</span>' +
+      a.opts.map(o =>
+        '<b onclick=\'App.pickStation("' + a.name + '",' + o.pt[0] + ',' + o.pt[1] + ')\'>' +
+        (o.hint ? o.hint + ' 旁' : o.pt[0].toFixed(2) + ',' + o.pt[1].toFixed(2)) + '</b>'
+      ).join('') + '</div>'
+    ).join('');
+  },
+
+  pickStation(name, lat, lon) {
+    this._stOverride = this._stOverride || {};
+    this._stOverride[name] = [lat, lon];
+    const box = document.getElementById('stPick');
+    if (box) box.innerHTML = '';
+    this.addByStations();
+  },
+
+  toggleNet(which, on) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setNetVisible(which, on);
+    const n = which === 'hs'
+      ? Object.keys((window.HSLINES || {}).lines || {}).filter(k => !window.HSLINES.lines[k].isLink).length
+      : Object.keys((window.CONVLINES || {}).lines || {}).filter(k => !window.CONVLINES.lines[k].isLink).length;
+    this.toast((which === 'hs' ? '高铁路网' : '普速路网') + (on ? '已显示（' + n + ' 条）' : '已隐藏'));
+  },
+
+  // 图例与路网开关的色块随主题走
+  paintLegend() {
+    const C = KC();
+    document.querySelectorAll('#legend i[data-c], #netToggles i[data-c]').forEach(el => {
+      const [kind, tone] = el.getAttribute('data-c').split('.');
+      if (!C[kind]) return;
+      // 迷雾开启时，「未坐」色块用半透明呈现，与地图一致
+      el.style.background = (tone === 'base' && FOG) ? hexA(C[kind].base, 0.45) : C[kind][tone];
+    });
+  },
+
+  syncBaseUI() {
+    const seg = document.getElementById('baseSeg');
+    if (seg) seg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', b.getAttribute('data-base') === BASE);
+    });
+    const cf = document.getElementById('chkFog'); if (cf) cf.checked = FOG;
+    const cfo = document.getElementById('chkFocus'); if (cfo) cfo.checked = FOCUS;
+    const dark = THEME === 'dark';
+    const inv = document.getElementById('chkInvert'); if (inv) inv.checked = FORCE_INVERT;
+    const row = document.getElementById('invertRow'); if (row) row.style.display = dark ? '' : 'none';
+    this.paintLegend();
+  },
+  syncThemeUI() { this.syncBaseUI(); },
+
+  toggleTheme(on) {
+    if (!MapAdapter.ready()) return;
+    const r = MapAdapter.setTheme(on ? 'dark' : 'light');
+    this.syncThemeUI();
+    if (on && r.reload) this.toast('已切深色；若底图未变暗，勾选下方「强制反色」');
+    else this.toast(on ? '已切换到深色底图' : '已切换到浅色底图');
+  },
+
+  toggleInvert(on) {
+    FORCE_INVERT = !!on;
+    try { localStorage.setItem('RW_INVERT', on ? '1' : '0'); } catch (e) {}
+    MapAdapter.syncThemeClass();
+    this.toast(on ? '已开启 CSS 强制反色' : '已关闭强制反色');
+  },
+
+  setBase(type) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setBase(type);
+    this.syncBaseUI();
+    this.toast(type === 'satellite' ? '已切到卫星底图（线路自动调亮）'
+      : (type === 'black' ? '已切到纯黑底图' : '已切到正常底图'));
+  },
+  setFog(on) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setFog(on);
+    this.syncBaseUI();
+    this.toast(on ? '迷雾地图：未走线路已变暗' : '已关闭迷雾，全路网正常显示');
+  },
+  setFocus(on) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setFocus(on);
+    this.syncBaseUI();
+    this.toast(on ? '铁路专注：已弱化公路与标注' : '已恢复完整底图标注');
+  },
+
+  fillSample() {
+    document.getElementById('paste').value =
+      '【铁路12306】您购买的 5月1日 G1 次 北京南 至 上海虹桥 列车已开具电子发票；' +
+      '另：10月3日 K113 次 成都 至 昆明、8月12日 Z41 次 兰州 至 乌鲁木齐 行程同步导入。';
+  },
+
+  importFromText() {
+    const text = document.getElementById('paste').value || '';
+    const items = Core.parseSms(text);
+    if (!items.length) return this.toast('未识别到车次，试试 G1 / K113 这样的格式');
+    let added = 0, dup = 0;
+    const failed = [];
+    const have = {};
+    this.items.forEach(x => { have[this._key(x)] = 1; });
+    items.forEach(it => {
+      // 优先用短信里的「A 至 B」直接吸附，这样停运/改线的车次也能画出来
+      if (it.from && it.to) {
+        const r = Core.buildTripByStops([it.from, it.to], it.code, null, this._pref);
+        if (r && !r.error && !r.ambiguous) {
+          const rec = {
+            kind: 'stops', from: it.from, via: [], to: it.to, code: it.code,
+            pref: this._pref || null, ov: null, date: it.date || '', createdAt: Date.now()
+          };
+          const k = this._key(rec);
+          if (have[k]) { dup++; return; }
+          have[k] = 1;
+          if (this.addItem(rec)) { added++; return; }
+        }
+      }
+      if (TRAINS[it.code] && !have['code:' + it.code + '||' + (it.date || '')]) {
+        if (this.addTrip(it.code, true)) { have['code:' + it.code + '||' + (it.date || '')] = 1; added++; return; }
+      }
+      if (have['code:' + it.code + '||' + (it.date || '')]) { dup++; return; }
+      failed.push(it.code);
+    });
+    if (added) {
+      document.getElementById('paste').value = '';
+      this.refresh();
+      this.toast('已保存 ' + added + ' 段行程' + (dup ? '，' + dup + ' 段重复已跳过' : ''));
+    } else if (dup) {
+      this.toast('这 ' + dup + ' 段行程已经在列表里了');
+    } else {
+      this.toast('这些车次暂时查不到：' + failed.join('、'));
+    }
+  },
+
+  addFromSelect() {
+    const code = document.getElementById('trainSel').value;
+    if (!code) return this.toast('请先选择车次');
+    if (this.addTrip(code, true)) this.toast('已添加 ' + code);
+    document.getElementById('trainSel').value = '';
+  },
+
+  addTrip(code, silent) {
+    if (!TRAINS[code]) return false;
+    const t = this.addItem({ kind: 'code', code, pref: null, date: '', createdAt: Date.now() });
+    if (!t) return false;
+    if (t.source === 'missing') { this.removeTrip(this.items.length - 1); return false; }
+    if (!silent) this.toast('已添加 ' + code);
+    return true;
+  },
+
+  removeTrip(idx) {
+    if (!this.items[idx]) return;
+    this.items.splice(idx, 1);
+    const s = Store.save(this.items);
+    this.rebuild();
+    this.refresh();
+    if (s.error) this.toast(s.error);
+  },
+
+  // ---- 存档：源数据 <-> 渲染结果 ----
+  // 同一区间 + 同车次 + 同日期视为同一段行程
+  _key(it) {
+    return (it.kind === 'code' ? ('code:' + it.code)
+      : ('st:' + it.from + '>' + (it.via || []).join('>') + '>' + it.to))
+      + '|' + (it.pref || '') + '|' + (it.date || '');
+  },
+
+  // 源数据 -> 渲染结果。算不出来的（站名已停用等）留占位而不是丢弃，
+  // 免得列表下标错位、删错行程
+  hydrate(it) {
+    let r = null;
+    if (it.kind === 'code' && TRAINS[it.code]) r = Core.buildTrip(it.code);
+    if ((!r || r.error) && it.from && it.to) {
+      r = Core.buildTripByStops([it.from].concat(it.via || [], [it.to]),
+        it.code || '手录', it.ov || null, it.pref || null);
+    }
+    if (!r || r.error || r.ambiguous) {
+      const t0 = TRAINS[it.code] || {};
+      return {
+        code: it.code || '手录', lineId: null, lineName: '—', source: 'missing',
+        from: it.from || t0.from || '—', to: it.to || t0.to || '—',
+        stops: [], segs: [], coords: [], km: 0, kindKm: {},
+        pref: it.pref || null, segKey: 'missing:' + this._key(it),
+        date: it.date || '', note: it.note || ''
+      };
+    }
+    r.date = it.date || '';
+    r.note = it.note || '';
+    return r;
+  },
+
+  rebuild() {
+    const out = [];
+    let bad = 0;
+    this.items.forEach(it => {
+      const t = this.hydrate(it);
+      if (t.source === 'missing') bad++;
+      out.push(t);
+    });
+    this.trips = out;
+    this._syncArchUI();
+    return bad;
+  },
+
+  addItem(it) {
+    const k = this._key(it);
+    if (this.items.some(x => this._key(x) === k)) {
+      this.toast('这段行程已经在列表里了');
+      return null;
+    }
+    this.items.push(it);
+    const s = Store.save(this.items);
+    if (s.error) { this.items.pop(); this.toast(s.error); return null; }
+    const t = this.hydrate(it);
+    this.trips.push(t);
+    this.refresh();
+    return t;
+  },
+
+  // ---- 档案与备份 ----
+  _syncArchUI() {
+    const sel = document.getElementById('archSel');
+    if (!sel) return;
+    const cur = Store.cur();
+    sel.innerHTML = Store.profiles().map(p =>
+      '<option value="' + String(p).replace(/"/g, '&quot;') + '"' +
+      (p === cur ? ' selected' : '') + '>' + p + '</option>').join('');
+    const el = document.getElementById('archInfo');
+    if (el) el.textContent = '（' + this.items.length + ' 条 · 自动保存）';
+  },
+
+  switchArch(name) {
+    Store.use(name);
+    this.items = Store.load();
+    const bad = this.rebuild();
+    this.refresh();
+    this.toast('已切到档案「' + name + '」' + (bad ? '，其中 ' + bad + ' 条暂时算不出路径' : ''));
+  },
+
+  newArch() {
+    const name = (window.prompt('新档案名（例如家人名字，同台机器可各存一份）', '') || '').trim();
+    if (!name) return;
+    const r = Store.create(name);
+    if (r.error) return this.toast(r.error);
+    Store.use(name);
+    this.items = [];
+    this.rebuild();
+    this.refresh();
+    this.toast('已新建并切到「' + name + '」');
+  },
+
+  delArch() {
+    const name = Store.cur();
+    if (!window.confirm('删除档案「' + name + '」及其全部行程？此操作不可恢复，建议先导出备份。')) return;
+    const r = Store.remove(name);
+    if (r.error) return this.toast(r.error);
+    this.items = Store.load();
+    Store.use(Store.profiles()[0]);
+    this.items = Store.load();
+    this.rebuild();
+    this.refresh();
+    this.toast('已删除「' + name + '」');
+  },
+
+  clearArch() {
+    if (!this.items.length) return this.toast('当前档案是空的');
+    if (!window.confirm('清空当前档案的 ' + this.items.length + ' 条行程？建议先导出备份。')) return;
+    this.items = [];
+    Store.save(this.items);
+    this.rebuild();
+    this.refresh();
+    this.toast('已清空');
+  },
+
+  exportData() {
+    if (!this.items.length) return this.toast('当前档案还没有行程');
+    const data = Store.dump(Store.cur(), this.items);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const d = new Date(), p = n => (n < 10 ? '0' : '') + n;
+    a.download = '铁路足迹-' + Store.cur() + '-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    this.toast('已导出 ' + this.items.length + ' 条行程');
+  },
+
+  importData(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      const p = Store.parse(String(fr.result || ''));
+      if (p.error) { input.value = ''; return this.toast(p.error); }
+      let list = p.items || [];
+      if (!list.length && p.profiles) p.profiles.forEach(pf => { list = list.concat(pf.items || []); });
+      const have = {};
+      this.items.forEach(x => { have[this._key(x)] = 1; });
+      let n = 0;
+      list.forEach(it => {
+        if (!it || (!it.code && !(it.from && it.to))) return;
+        const k = this._key(it);
+        if (have[k]) return;
+        have[k] = 1;
+        this.items.push(it);
+        n++;
+      });
+      if (n) {
+        const s = Store.save(this.items);
+        if (s.error) { input.value = ''; return this.toast(s.error); }
+        this.rebuild();
+        this.refresh();
+      }
+      this.toast(n ? ('已导入 ' + n + ' 条行程（重复的已跳过）') : '没有新增行程，可能都已在列表里');
+      input.value = '';
+    };
+    fr.readAsText(f);
+  },
+
+  focus(idx) {
+    MapAdapter.focusTrip(this.trips[idx]);
+  },
+
+  refresh() {
+    MapAdapter.render(this.trips);
+    const s = Core.summarize(this.trips);
+    document.getElementById('sKm').textContent = s.totalKm.toLocaleString();
+    document.getElementById('sCnt').textContent = s.count;
+    document.getElementById('sLit').textContent = s.litKm.toLocaleString();
+    document.getElementById('sProv').textContent = s.provinces;
+    document.getElementById('sLines').textContent = s.lines.length ? s.lines.join('、') : '—';
+
+    const box = document.getElementById('trips');
+    if (!this.trips.length) {
+      box.innerHTML = '<div class="empty">暂无行程' +
+        (this.items.length ? '（存档里 ' + this.items.length + ' 条都算不出路径）' : '') + '</div>';
+      return;
+    }
+    const srcCls = t => (t.source === 'missing' || t.source.indexOf('straight') === 0) ? 'fake'
+      : (t.source === 'osm' ? 'real' : 'part');
+    const srcTxt = t => t.source === 'missing' ? '算不出路径'
+      : (t.source.indexOf('straight') === 0 ? '示意直线' : (t.source === 'osm' ? '真实线位' : '局部补全'));
+    box.innerHTML = this.trips.map((t, i) =>
+      '<div class="trip" onclick="App.focus(' + i + ')">' +
+        '<span class="code">' + t.code + '</span>' +
+        '<span class="route">' + t.from + '—' + t.to + '</span>' +
+        '<span class="src ' + srcCls(t) + '">' + srcTxt(t) + '</span>' +
+        (t.date ? '<span class="src">' + t.date + '</span>' : '') +
+        (t.pref ? '<span class="src pf">' + (t.pref === 'highspeed' ? '高铁优先' : '普速优先') + '</span>' : '') +
+        '<span class="km">' + t.km.toLocaleString() + 'km</span>' +
+        '<span class="del" onclick="event.stopPropagation();App.removeTrip(' + i + ')">×</span>' +
+      '</div>'
+    ).join('');
+  },
+
+  toggleKeyBox() {
+    const b = document.getElementById('keyBox');
+    if (!b) return;
+    b.style.display = b.style.display === 'none' ? 'block' : 'none';
+    if (b.style.display === 'block') {
+      document.getElementById('keyInput').value = localStorage.getItem('TMAP_KEY') || '';
+    }
+  },
+  saveKey() {
+    const v = (document.getElementById('keyInput').value || '').trim();
+    if (!v) { this.toast('Key 不能为空'); return; }
+    localStorage.setItem('TMAP_KEY', v);
+    location.href = location.pathname + '?key=' + encodeURIComponent(v);
+  },
+  clearKey() {
+    localStorage.removeItem('TMAP_KEY');
+    location.href = location.pathname;
+  },
+
+  togglePanel() {
+    const body = document.getElementById('panelBody');
+    const btn = document.getElementById('panelBtn');
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? 'block' : 'none';
+    btn.textContent = hidden ? '收起' : '展开';
+  },
+
+  toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._t);
+    this._t = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+};
+
+window.addEventListener('load', () => App.init());
+</script>
+</body>
+</html>
