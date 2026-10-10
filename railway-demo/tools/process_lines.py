@@ -49,17 +49,23 @@ WANTED = {
 }
 
 SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.0015))  # 度，约 150m
-# 碎 .chain 端点合并容差。之前只有 ~1.2km，而实测线路碎片间的真实续接缺口
-# 几乎全部落在 1~5km（双线并行段、站场引轨、跨块边界的微小错位），导致
-# merge 几乎什么都没接上、全国 73% 普速线被切碎、路由被直线桥接抄近路。
-# 提到 ~5km（0.045 度），并配合方向连续性判断（见 merge_chains）防并行线假接。
-MERGE_TOL = float(os.environ.get("MERGE_TOL", 0.045))    # 度，约 5km
+# 碎 .chain 端点合并容差（度）。
+# v0.3.1 曾据此把容差从 ~1.2km 提到 ~5km，想把碎片全接上——事后用diagnose_gaps.py
+# 逐条核查发现那是**过头了**：容差越大，越会把并行双线/站场引轨/无关支线误接在一起，
+# 反而制造出新的假断裂。实测扫描（配合 absorb_spurs）：
+#   0.012→23 条真缺口   0.018→24   0.024→25   0.030→28   0.045→32   0.060→35   0.080→38
+# 且各档位下「走线质量」完全一致（G1 仍沿真实轨道、手录里程不变），因为行程追踪走的是
+# 全路网图而非同线碎片。所以取最小值 0.012：真缺口最少、且不会误接。
+MERGE_TOL = float(os.environ.get("MERGE_TOL", 0.012))    # 度，约 1.3km
 # 方向连续性阈值（度）：缺口 >1km 的续接要求转角小于此值，才认为是同一条线的
 # 真正延续；否则视为并行双线/交叉线，拒绝假接。
 MERGE_TURN_DEG = float(os.environ.get("MERGE_TURN_DEG", 80.0))
 # 保留链的最短点数。桥梁/隧道常是十几米到几百米的小 way，
 # 阈值一高就会把它们整段丢掉，线路在桥隧处断开。
 MIN_CHAIN = int(os.environ.get("MIN_CHAIN", 8))
+# 是否把短引轨/支线并入其依附的干线（见 absorb_spurs）。
+# 关掉可回退到旧行为，方便做A/B 对比。
+ABSORB_SPURS = os.environ.get("ABSORB_SPURS", "1") == "1"
 COMBINE_ALL = os.environ.get("COMBINE_ALL", "1") == "1"
 
 #  feeder 线路：OSM 里改了名字、但在运营上属于同一条通道的路段。
@@ -291,6 +297,61 @@ def merge_chains(chains, tol=MERGE_TOL, turn_deg=MERGE_TURN_DEG):
     return sorted(out, key=len, reverse=True)
 
 
+#站场引轨/接线支线的长度上限（km）。短于它的链不是干线的一部分，
+# 而是从属于某条干线的小分支（如胶济线旁的 1.3km 站场引轨）。
+SPUR_KM = float(os.environ.get("SPUR_KM", 8.0))
+
+
+def _chain_km(c):
+    return sum(haversine_m(c[i], c[i + 1]) for i in range(len(c) - 1)) / 1000.0
+
+
+def absorb_spurs(main_chains, all_chains, tol=MERGE_TOL):
+    """把短的引轨/支线并到它所依附的干线上，而不是让它单独成一条「断裂的线」。
+
+    实测很多线路被诊断成「断裂」，其实是「完整干线 + 一小截站场引轨」被存成两段
+    （如胶济线 716km 主线旁挂了 1.3km 引轨，京广线 4517km 主线旁挂了 4.8km 支线）。
+    这类支线本就该属于干线，若放任它独立成段，会在数据里表现成一条虚假缺口。
+    这里把长度 < SPUR_KM 且端点落在某条主干 tol 范围内的支线直接嫁接进主干。
+    """
+    if not main_chains:
+        return main_chains, []
+    mains = [list(c) for c in main_chains]
+    consumed = []
+    # 支线候选：所有链里长度不足 SPUR_KM 的（main_chains 本身已在 mains 里）
+    main_set = {id(c) for c in main_chains}
+    for c in all_chains:
+        if id(c) in main_set:
+            continue
+        if len(c) < 2 or _chain_km(c) > SPUR_KM:
+            continue
+        consumed.append(c)
+
+    for spur in consumed:
+        sp_head, sp_tail = spur[0], spur[-1]
+        best = None  # (gap, main_idx, at_end, reverse)
+        for mi, m in enumerate(mains):
+            for cand_end in (0, 1):
+                anchor = m[-1] if cand_end else m[0]
+                for sp_end, reverse in ((sp_tail, False), (sp_head, True)):
+                    g = math.hypot(anchor[0] - sp_end[0], anchor[1] - sp_end[1])
+                    if g > tol:
+                        continue
+                    if best is None or g < best[0]:
+                        best = (g, mi, cand_end, reverse)
+        if best is None:
+            continue  # 找不到归属干线的支线，保留为独立段（可能真的是另一条线）
+        g, mi, at_end, reverse = best
+        m = mains[mi]
+        piece = list(reversed(spur))[1:] if reverse else spur[1:]
+        if at_end:
+            mains[mi] = m + piece
+        else:
+            mains[mi] = piece + m
+    return sorted(mains, key=len, reverse=True), consumed
+
+
+
 def haversine_m(a, b):
     R = 6371000.0
     d_lat = math.radians(b[0] - a[0])
@@ -434,6 +495,11 @@ def main():
             # 丢弃过短的碎片段，保留主要连续段
             merged = merge_chains([c for c in chains if len(c) >= 3], MERGE_TOL)
             main_chains = [c for c in merged if len(c) >= MIN_CHAIN]
+            # 把短引轨/支线并入其依附的干线（避免「完整干线+1km 引轨」被当成断裂的线）
+            if ABSORB_SPURS and main_chains:
+                main_chains, absorbed = absorb_spurs(main_chains, chains, MERGE_TOL)
+            else:
+                absorbed = []
             total_raw = sum(len(c) for c in chains)
             paths = []
             longest_km = 0.0

@@ -111,6 +111,9 @@ def build(name, items):
     chains = P.stitch(ways)
     merged = P.merge_chains([c for c in chains if len(c) >= 3], MERGE_TOL)
     main = [c for c in merged if len(c) >= MIN_CHAIN]
+    # 把短引轨/支线并入其依附的干线，避免「完整干线 + 1km 引轨」被当成断裂的线
+    if P.ABSORB_SPURS and main:
+        main, _absorbed = P.absorb_spurs(main, chains, MERGE_TOL)
     paths, longest = [], 0.0
     for c in main:
         simp = P.simplify(c, SIMPLIFY_TOL)
