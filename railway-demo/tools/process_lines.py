@@ -49,8 +49,14 @@ WANTED = {
 }
 
 SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.0015))  # 度，约 150m
-# 碎 .chain 端点合并容差；太小各段接不上，太大会跨并行线造假边
-MERGE_TOL = float(os.environ.get("MERGE_TOL", 0.012))    # 度，约 1.2km
+# 碎 .chain 端点合并容差。之前只有 ~1.2km，而实测线路碎片间的真实续接缺口
+# 几乎全部落在 1~5km（双线并行段、站场引轨、跨块边界的微小错位），导致
+# merge 几乎什么都没接上、全国 73% 普速线被切碎、路由被直线桥接抄近路。
+# 提到 ~5km（0.045 度），并配合方向连续性判断（见 merge_chains）防并行线假接。
+MERGE_TOL = float(os.environ.get("MERGE_TOL", 0.045))    # 度，约 5km
+# 方向连续性阈值（度）：缺口 >1km 的续接要求转角小于此值，才认为是同一条线的
+# 真正延续；否则视为并行双线/交叉线，拒绝假接。
+MERGE_TURN_DEG = float(os.environ.get("MERGE_TURN_DEG", 80.0))
 # 保留链的最短点数。桥梁/隧道常是十几米到几百米的小 way，
 # 阈值一高就会把它们整段丢掉，线路在桥隧处断开。
 MIN_CHAIN = int(os.environ.get("MIN_CHAIN", 8))
@@ -130,37 +136,72 @@ def simplify(points, tol):
 
 # ---------- 拼接：把一堆小段合成尽量长的连续链 ----------
 def stitch(ways):
+    """把 OSM 小 way 按共享端点串成连续折线。
+
+    关键修复：在**分歧点**（岔线 / 站场 / 双线并行）处，旧版贪心取第一条接续，
+    会把主线误接进岔线、把一条完整线路岔成多段（如通灌线 193 条 way 被岔成 7 段、
+    全国 70%+ 线路碎片化、路由被直线桥接抄近路）。
+
+    新版在分支点选择**与来向最共线**的那条作为延续（即沿主线直行，而不是拐进岔线）；
+    岔出去的支线（到发线、渡线等）留作独立短链，由主循环后续单独成链——这正是
+    铁路应有的拓扑，不会造成路由错误。
+    """
     key = lambda p: (round(p[0], 6), round(p[1], 6))
     segs = [[key(p) for p in w] for w in ways]
-    # 端点 -> 段索引，出现 2 次以上说明是分歧点
+    # 端点 -> [(段索引, 该端是段的哪头 0=首/1=尾)]
     endpoint = defaultdict(list)
     for idx, s in enumerate(segs):
-        endpoint[s[0]].append(idx)
-        endpoint[s[-1]].append(idx)
+        endpoint[s[0]].append((idx, 0))
+        endpoint[s[-1]].append((idx, 1))
 
     used = [False] * len(segs)
     chains = []
 
+    def _v(a, b):
+        return (b[0] - a[0], b[1] - a[1])
+
+    def _cos(v1, v2):
+        n1 = math.hypot(v1[0], v1[1])
+        n2 = math.hypot(v2[0], v2[1])
+        if n1 < 1e-12 or n2 < 1e-12:
+            return 2.0          # 退化向量：优先（如短支线）
+        return (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)
+
+    def best_continuation(end, incoming):
+        """在共享 end 的未用段里，选与来向 incoming 最共线（夹角最小）的作为延续。"""
+        cands = [(idx, w) for (idx, w) in endpoint.get(end, []) if not used[idx]]
+        if not cands:
+            return None
+        best, best_cos = None, -3.0
+        for idx, w in cands:
+            s = segs[idx]
+            # 该段离开 end 的方向
+            outv = _v(s[1], s[0]) if w == 0 else _v(s[-2], s[-1])
+            c = _cos(incoming, outv)
+            if c > best_cos:
+                best_cos, best = c, (idx, w)
+        return best
+
     def extend(chain, forward):
         while True:
             end = chain[-1] if forward else chain[0]
-            nxt = None
-            for i in endpoint.get(end, []):
-                if used[i]:
-                    continue
-                s = segs[i]
-                if s[0] == end or s[-1] == end:
-                    nxt = i
-                    break
-            if nxt is None:
+            inc = (_v(chain[-2], chain[-1]) if forward
+                   else _v(chain[1], chain[0]))
+            nb = best_continuation(end, inc)
+            if nb is None:
                 return
-            used[nxt] = True
-            s = segs[nxt]
-            piece = s[1:] if s[0] == end else s[:-1][::-1]
+            idx, w = nb
+            used[idx] = True
+            s = segs[idx]
+            # 去掉与 end 重合的端点后拼接
+            if w == 0:                  # s[0] == end
+                piece = s[1:]
+            else:                        # s[-1] == end
+                piece = s[:-1][::-1]
             if forward:
                 chain.extend(piece)
             else:
-                chain[:0] = piece
+                chain[:0] = piece[::-1]
 
     order = sorted(range(len(segs)), key=lambda i: -len(segs[i]))
     for i in order:
@@ -176,15 +217,32 @@ def stitch(ways):
     return chains
 
 
-def merge_chains(chains, tol=0.0012):
-    """把 stitch 后残留的碎 piec 按端点几乎重合(<tol，约 120m) 重新串起来。
+def _dirvec(p, q):
+    return (q[0] - p[0], q[1] - p[1])
 
-    容差不能大，否则会把上下行并行正线首尾相接，形成假连接。
+
+def _angle(v1, v2):
+    n1 = math.hypot(v1[0], v1[1])
+    n2 = math.hypot(v2[0], v2[1])
+    if n1 < 1e-12 or n2 < 1e-12:
+        return 0.0
+    c = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+    return math.degrees(math.acos(c))
+
+
+def merge_chains(chains, tol=MERGE_TOL, turn_deg=MERGE_TURN_DEG):
+    """把 stitch 后残留的碎片按端点就近续接成更长的连续折线。
+
+    相比旧版（仅 <120m 精确重合），这里允许缺口 <= tol（默认 ~5km）的续接，
+    从而把双线并行段、站场引轨、跨块边界错位造成的碎片重新拼回主线；
+    同时用**方向连续性**过滤假连接：缺口 >1km 时，要求到达端点前的方向与
+    离开另一端的方向大致同向（转角 < turn_deg），否则视为并行双线/交叉线而拒绝，
+    避免把上下行并行正线首尾相接造出假边。
     """
     def gap(a, b):
         return math.hypot(a[0] - b[0], a[1] - b[1])
 
-    cs = sorted((list(c) for c in chains), key=len, reverse=True)
+    cs = [list(c) for c in chains]
     used = [False] * len(cs)
     out = []
     for i in range(len(cs)):
@@ -192,25 +250,43 @@ def merge_chains(chains, tol=0.0012):
             continue
         used[i] = True
         cur = cs[i]
-        changed = True
-        while changed:
-            changed = False
+        improved = True
+        while improved:
+            improved = False
+            chead, ctail = cur[-1], cur[0]
+            best = None  # (gap, j, anchor, reverse)
             for j in range(len(cs)):
                 if used[j]:
                     continue
                 c = cs[j]
-                if gap(cur[-1], c[0]) < tol:
-                    cur = cur + c[1:]
-                elif gap(cur[-1], c[-1]) < tol:
-                    cur = cur + c[::-1][1:]
-                elif gap(cur[0], c[-1]) < tol:
-                    cur = c[:-1] + cur
-                elif gap(cur[0], c[0]) < tol:
-                    cur = c[::-1][:-1] + cur
-                else:
-                    continue
+                for ae, be, anchor, rev in (
+                    (chead, c[0], "head", False),
+                    (chead, c[-1], "head", True),
+                    (ctail, c[-1], "tail", False),
+                    (ctail, c[0], "tail", True),
+                ):
+                    g = gap(ae, be)
+                    if g > tol:
+                        continue
+                    # 缺口 >1km 时校验是否真续接（防并行线假接）
+                    if g > 0.009:
+                        a_before = cur[-2] if anchor == "head" else cur[1]
+                        if rev:
+                            b_start, b_after = c[-1], c[-2]
+                        else:
+                            b_start, b_after = c[0], c[1]
+                        ang = _angle(_dirvec(a_before, ae), _dirvec(b_start, b_after))
+                        if ang > turn_deg:
+                            continue
+                    if best is None or g < best[0]:
+                        best = (g, j, anchor, rev)
+            if best is not None:
+                g, j, anchor, rev = best
+                c = cs[j]
+                piece = list(reversed(c))[1:] if rev else c[1:]
+                cur = (cur + piece) if anchor == "head" else (piece + cur)
                 used[j] = True
-                changed = True
+                improved = True
         out.append(cur)
     return sorted(out, key=len, reverse=True)
 
