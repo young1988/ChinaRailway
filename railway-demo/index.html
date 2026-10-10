@@ -275,10 +275,10 @@
     <label class="net-chk"><input type="checkbox" id="chkLabels" onchange="App.setLabels(this.checked)"><i></i>显示站名（在站点圆点上标注名称）</label>
   </div>
 
-  <div class="sec-sub">线路宽度</div>
+  <div class="sec-sub">走过的线路宽度</div>
   <div class="range-row">
-    <input type="range" id="lineW" min="0.5" max="8" step="0.5" value="2" oninput="App.setLineW(parseFloat(this.value))">
-    <span class="range-val" id="lwVal">2.0</span>
+    <input type="range" id="lineW" min="0" max="1" step="0.2" value="0.6" oninput="App.setLineW(parseFloat(this.value))">
+    <span class="range-val" id="lwVal">0.6</span>
   </div>
 
   <div class="sec-title">路网显示</div>
@@ -1173,8 +1173,22 @@ let FOG = true;                 // 迷雾地图：未走过的全路网变暗，
 let FOCUS = false;              // 铁路专注：隐藏公路文字注记与 POI，弱化非铁路信息
 let FORCE_INVERT = false;       // 官方夜间样式不生效时的 CSS 反色兜底
 let SHOW_LABELS = false;        // 是否在站点圆点上叠加站名文字（独立 MultiLabel 图层）
-let LINE_W = 2;                 // 路网线条宽度（滑块控制，范围 0.5~8）
+let LINE_W = 0.6;               // 走过的线路（lit）宽度系数，滑块控制，范围 0~1、步长 0.2；只影响已走线路
 const KC = () => THEME_COLOR[THEME];   // 取当前主题配色
+// 走过的线路实际像素宽度：0~1 映射到 1~8px
+const litWidth = () => 1 + LINE_W * 7;
+// 车站枢纽度（被多少条线路共用），用于站名按缩放分级：度越高越重要
+let STATION_DEGREE = null;
+function ensureStationDegree() {
+  if (STATION_DEGREE) return;
+  STATION_DEGREE = {};
+  Object.keys(LINES).forEach(id => {
+    (LINES[id].stations || []).forEach(s => {
+      const nm = s[0];
+      STATION_DEGREE[nm] = (STATION_DEGREE[nm] || 0) + 1;
+    });
+  });
+}
 // 底图类型 -> 线条明暗主题：正常图用浅色线条，纯黑/卫星用亮色线条
 const themeOfBase = b => (b === 'normal' ? 'light' : 'dark');
 // 把 #rrggbb 转成带透明度的 rgba（迷雾地图用于压暗未走线路）
@@ -1203,7 +1217,7 @@ const MapAdapter = {
       if (localStorage.getItem('RW_LABELS') === '1') SHOW_LABELS = true;
       else if (localStorage.getItem('RW_LABELS') === '0') SHOW_LABELS = false;
       const lw = parseFloat(localStorage.getItem('RW_LINEW'));
-      if (!isNaN(lw) && lw >= 0.5 && lw <= 8) LINE_W = lw;
+      if (!isNaN(lw) && lw >= 0 && lw <= 1) LINE_W = lw;
     } catch (e) {}
     THEME = themeOfBase(BASE);
     this.syncThemeClass();
@@ -1311,34 +1325,48 @@ const MapAdapter = {
       },
       geometries: []
     });
+
+    // 缩放/平移时按缩放分级与视口重新筛选站名（防抖，避免拖动时频繁重建）
+    let relabelT = null;
+    const relabel = () => {
+      if (relabelT) clearTimeout(relabelT);
+      relabelT = setTimeout(() => this.updateLabels(), 80);
+    };
+    try {
+      if (this.map && this.map.on) {
+        this.map.on('zoom', relabel);
+        this.map.on('bounds_changed', relabel);
+        this.map.on('center_changed', relabel);
+      }
+    } catch (e) {}
   },
 
   ready() { return !!this.map; },
 
-  // 底图网样式（base_=行程线所在线路，net_=全路网）。宽度随 LINE_W 滑块变化。
+  // 底图网样式（base_/net_ = 全路网，未走过的线路）。宽度固定，不随线路宽度滑块变化。
   netStyles() {
-    const C = KC(); const s = {}; const w = LINE_W;
+    const C = KC(); const s = {};
     Object.keys(C).forEach(k => {
       if (FOG) {
         // 迷雾地图：未走过的全路网压暗，仅已坐线路（lit 图层）保持高亮
-        s['base_' + k] = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.22), width: Math.max(0.5, w * 0.75), borderWidth: 0, lineCap: 'round' });
-        s['net_' + k]  = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.16), width: Math.max(0.5, w * 0.6), borderWidth: 0, lineCap: 'round' });
+        s['base_' + k] = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.22), width: 1.5, borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.16), width: 1.2, borderWidth: 0, lineCap: 'round' });
       } else {
-        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: w + 1, borderWidth: 0, lineCap: 'round' });
-        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: w, borderWidth: 0, lineCap: 'round' });
+        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: 3, borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: 2, borderWidth: 0, lineCap: 'round' });
       }
     });
     return s;
   },
   litStyles() {
-    const C = KC(); const s = {}; const w = LINE_W + 3;
+    const C = KC(); const s = {}; const w = litWidth();
     Object.keys(C).forEach(k => {
       s['lit_' + k] = new TMap.PolylineStyle({ color: C[k].lit, width: w, borderWidth: 0, lineCap: 'round' });
     });
     return s;
   },
   glowColor() { return THEME === 'dark' ? 'rgba(255,176,32,0.30)' : 'rgba(245,166,35,0.22)'; },
-  glowW() { return Math.max(8, (LINE_W + 3) * 2.6); },
+  glowW() { return Math.max(3, litWidth() * 2); },
 
   syncThemeClass() {
     document.body.classList.toggle('dark', THEME === 'dark');
@@ -1423,11 +1451,12 @@ const MapAdapter = {
     SHOW_LABELS = !!on;
     try { localStorage.setItem('RW_LABELS', SHOW_LABELS ? '1' : '0'); } catch (e) {}
     if (this.labelLayer) this.labelLayer.setMap(SHOW_LABELS ? this.map : null);
+    this.updateLabels();
   },
 
-  // 线路宽度滑块（范围 0.5~8，持久化）。改完重建折线图层即时生效。
+  // 线路宽度滑块（范围 0~1、步长 0.2，持久化）。只影响已走过的线路（lit/glow），不影响全路网。
   setLineW(v) {
-    LINE_W = Math.min(8, Math.max(0.5, v));
+    LINE_W = Math.min(1, Math.max(0, v));
     try { localStorage.setItem('RW_LINEW', String(LINE_W)); } catch (e) {}
     this._rebuildLayers();
   },
@@ -1484,24 +1513,49 @@ const MapAdapter = {
     });
     this.stationLayer.setGeometries(marks);
 
-    // 站名文字：与站点圆点一一对应（按坐标去重，避免同站多线重复标注）
-    const labelGeoms = [];
+    // 站名文字：仅收集「已走过的站」，最终显示集合由 updateLabels() 按缩放级别与视口裁剪决定
+    this._litLabelList = [];
     const seenLabel = {};
-    const pushLabel = (s, name) => {
-      const key = name + '@' + s[1].toFixed(4) + ',' + s[2].toFixed(4);
+    Object.keys(litStations).forEach(nm => {
+      const s = litStations[nm];
+      const key = nm + '@' + s[1].toFixed(4) + ',' + s[2].toFixed(4);
       if (seenLabel[key]) return;
       seenLabel[key] = 1;
-      labelGeoms.push({ id: 'lb_' + (n++), styleId: 'label', position: new TMap.LatLng(s[1], s[2]), content: name });
-    };
-    Object.keys(LINES).forEach(id => {
-      LINES[id].stations.forEach(s => pushLabel(s, s[0]));
+      this._litLabelList.push({ name: nm, lat: s[1], lon: s[2] });
     });
-    Object.keys(litStations).forEach(nm => {
-      if (inLines[nm]) return;
-      pushLabel(litStations[nm], nm);
+    this.updateLabels();
+  },
+
+  // 按「显示开关 + 缩放分级 + 视口裁剪」计算应显示的站名。仅作用于已走过的站。
+  updateLabels() {
+    if (!this.labelLayer) return;
+    if (!SHOW_LABELS) { this.labelLayer.setGeometries([]); return; }
+    ensureStationDegree();
+    const map = this.map;
+    let zoom = (map && map.getZoom) ? map.getZoom() : 10;
+    // 缩放分级：越缩小只标大站（枢纽度高者）
+    let minDeg;
+    if (zoom >= 11) minDeg = 0;        // 放大：显示全部已走站
+    else if (zoom >= 7) minDeg = 2;    // 中等：枢纽及以上
+    else minDeg = 4;                   // 缩小：仅特大枢纽
+    // 视口裁剪（带外扩边距，避免边缘闪烁）
+    let bnd = null;
+    if (map && map.getBounds) {
+      const b = map.getBounds();
+      const ne = b.getNorthEast(), sw = b.getSouthWest();
+      const padLat = (ne.getLat() - sw.getLat()) * 0.15;
+      const padLng = (ne.getLng() - sw.getLng()) * 0.15;
+      bnd = { n: ne.getLat() + padLat, s: sw.getLat() - padLat, e: ne.getLng() + padLng, w: sw.getLng() - padLng };
+    }
+    const geoms = [];
+    let i = 0;
+    (this._litLabelList || []).forEach(it => {
+      const deg = STATION_DEGREE[it.name] || 0;
+      if (deg < minDeg) return;
+      if (bnd && (it.lat > bnd.n || it.lat < bnd.s || it.lon > bnd.e || it.lon < bnd.w)) return;
+      geoms.push({ id: 'lb_' + (i++), styleId: 'label', position: new TMap.LatLng(it.lat, it.lon), content: it.name });
     });
-    this._lastLabels = labelGeoms;
-    if (this.labelLayer) this.labelLayer.setGeometries(labelGeoms);
+    this.labelLayer.setGeometries(geoms);
   },
 
   focusTrip(trip) {
@@ -1527,7 +1581,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const APP_DATE = '2026-10-10';
 
 /* ============================================================
