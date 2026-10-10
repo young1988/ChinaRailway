@@ -189,6 +189,7 @@
 <script src="conventional_lines.js"></script>
 <script src="stations_real.js"></script>
 <script src="stations_all.js"></script>
+<script src="aliases.js"></script>
 </head>
 <body>
 <div id="map"></div>
@@ -273,6 +274,7 @@
     <label class="net-chk"><input type="checkbox" id="chkFocus" onchange="App.setFocus(this.checked)"><i></i>铁路专注（弱化公路/标注）</label>
     <label class="net-chk" id="invertRow" style="display:none;"><input type="checkbox" id="chkInvert" onchange="App.toggleInvert(this.checked)"><i></i>强制反色<span>（底图没变暗时勾它）</span></label>
     <label class="net-chk"><input type="checkbox" id="chkLabels" onchange="App.setLabels(this.checked)"><i></i>显示站名（在站点圆点上标注名称）</label>
+    <label class="net-chk"><input type="checkbox" id="chkAnim" checked onchange="App.setAnim(this.checked)"><i></i>点亮动效（保存后沿贝塞尔曲线生长）</label>
   </div>
 
   <div class="sec-sub">走过的线路宽度</div>
@@ -430,11 +432,25 @@ const TRAINS = {
 /* 手写坐标误差可达十几公里，会用错误站位点去匹配线路，
    所以这里一律覆盖成 OSM 的真实车站节点坐标（GCJ-02）。 */
 (function applyRealStations() {
-  const S = window.STATIONS_REAL || {};
+  // stations_real.js 现按 OSM node id 索引坐标；stations_all.js 每行 id|名字|纬度|经度。
+  // 先建「名字 -> id」索引（取第一个同名候选作代表），再把每条线路的站点补上 id 并按 id 覆盖坐标。
+  // 兼容旧格式：若某行没有 id（3 列 名字|纬度|经度），则 id 为空、坐标保持原值。
+  const REAL = window.STATIONS_REAL || {};
+  const name2id = {};
+  (window.STATIONS_ALL || '').split('\n').forEach(line => {
+    const p = line.split('|');
+    if (p.length < 3) return;
+    const id = p.length >= 4 ? p[0] : '';
+    const name = p.length >= 4 ? p[1] : p[0];
+    if (id && !(name in name2id)) name2id[name] = id;
+  });
   Object.keys(LINES).forEach(id => {
-    LINES[id].stations = LINES[id].stations.map(s =>
-      S[s[0]] ? [s[0], S[s[0]][0], S[s[0]][1]] : s
-    );
+    LINES[id].stations = LINES[id].stations.map(s => {
+      const name = s[0];
+      const sid = s[3] != null ? s[3] : (name2id[name] || '');
+      if (sid && REAL[sid]) return [name, REAL[sid][0], REAL[sid][1], sid];
+      return sid ? [name, s[1], s[2], sid] : s;
+    });
   });
 })();
 
@@ -489,35 +505,96 @@ const PREF_MULT = 2;
 
 /* ============================================================
    车站索引：站名 -> 坐标（全国 OSM 车站，支持手动录入任意车站）
+
+   方案 C：每站带OSM node id（稳定不变，改名不换 id）。
+   stations_all.js 格式为 `id|名字|纬度|经度`（兼容旧的 `名字|纬度|经度`）。
+   aliases.js 存「旧名/别名 -> id」，车站更名后旧行程靠它仍能解析回同一站。
    ============================================================ */
 const Stations = {
-  map: null, names: null,
+  map: null, names: null, byId: null, alias: null,
   init() {
     if (this.map) return;
-    const m = new Map();
+    const m = new Map();        // name -> [[lat,lon], ...]
+    const byId = new Map();     // id   -> {name, lat, lon}
+    const name2id = new Map();  // name -> id（该名第一个候选）
     (window.STATIONS_ALL || '').split('\n').forEach(line => {
+      if (!line) return;
       const p = line.split('|');
-      if (p.length < 3) return;
-      const lat = parseFloat(p[1]), lon = parseFloat(p[2]);
-      if (!isFinite(lat) || !isFinite(lon)) return;
-      let a = m.get(p[0]);
-      if (!a) { a = []; m.set(p[0], a); }
+      // 新格式 4 列：id|名字|纬度|经度；旧格式 3 列：名字|纬度|经度
+      const hasId = p.length >= 4;
+      const id = hasId ? p[0] : '';
+      const name = hasId ? p[1] : p[0];
+      const lat = parseFloat(hasId ? p[2] : p[1]);
+      const lon = parseFloat(hasId ? p[3] : p[2]);
+      if (!name || !isFinite(lat) || !isFinite(lon)) return;
+      let a = m.get(name);
+      if (!a) { a = []; m.set(name, a); }
       a.push([lat, lon]);
+      if (id && !byId.has(id)) byId.set(id, { name: name, lat: lat, lon: lon });
+      if (id && !name2id.has(name)) name2id.set(name, id);
     });
     this.map = m;
+    this.byId = byId;
+    this.name2id = name2id;
     this.names = Array.from(m.keys());
+    this.alias = window.STATIONS_ALIASES || {};
   },
   get(n) { this.init(); return this.map.get(n) || null; },
-  // 兼容「北京南站」与「北京南」两种写法
-  resolve(q) {
+
+  // 站名 -> id（先查现名，再查别名层）。查不到返回 null。
+  idOf(name) {
+    this.init();
+    name = (name || '').trim();
+    if (!name) return null;
+    if (this.name2id.has(name)) return this.name2id.get(name);
+    const A = this.alias;
+    if (A && A[name] != null) return String(A[name]);
+    return null;
+  },
+
+  // 按 id 取坐标
+  coordOf(id) {
+    this.init();
+    const rec = this.byId && this.byId.get(String(id));
+    return rec ? [rec.lat, rec.lon] : null;
+  },
+
+  // 按 id 取现名（车站改名后，id 不变、名字变了）
+  nameOfId(id) {
+    this.init();
+    const rec = this.byId && this.byId.get(String(id));
+    return rec ? rec.name : null;
+  },
+
+  // 统一解析：现名 -> 别名 -> 「北京南站」兼容写法。返回 {id, name, lat, lon, pts}
+  resolveStation(q) {
+    this.init();
     q = (q || '').trim();
     if (!q) return null;
     const tries = [q, q.replace(/站$/, ''), q + '站'];
     for (const c of tries) {
-      const r = this.get(c);
-      if (r) return { name: c, pts: r };
+      const pts = this.map.get(c);
+      if (pts && pts.length) {
+        return { id: this.idOf(c), name: c, lat: pts[0][0], lon: pts[0][1], pts: pts };
+      }
+    }
+    // 现名查不到 → 试别名层（旧名/曾用名指向同一 id）
+    const A = this.alias || {};
+    for (const c of tries) {
+      const aid = A[c];
+      if (aid != null) {
+        const rec = this.byId && this.byId.get(String(aid));
+        if (rec) return { id: String(aid), name: rec.name, lat: rec.lat, lon: rec.lon, viaAlias: c, pts: [[rec.lat, rec.lon]] };
+      }
     }
     return null;
+  },
+
+  // 兼容「北京南站」与「北京南」两种写法（内部走resolveStation）
+  resolve(q) {
+    const r = this.resolveStation(q);
+    if (!r) return null;
+    return { name: r.name, pts: r.pts, id: r.id };
   },
   search(q, limit) {
     this.init();
@@ -888,6 +965,41 @@ const Core = {
     return { coords, gaps };
   },
 
+  // 折线 -> 平滑曲线：Catmull-Rom 转三次贝塞尔（控制点由前后邻居推出），
+  // 曲线仍然穿过每一个原始点，所以形状忠实于真实线位，只是转角更顺滑。
+  // 仅用于「点亮动画」的绘制观感，里程统计仍用原始折线。
+  smoothPath(coords, maxPts) {
+    maxPts = maxPts || 320;
+    let pts = (coords || []).filter(p => p && isFinite(p[0]) && isFinite(p[1]));
+    if (pts.length < 3) return pts.slice();
+    // 抽稀：OSM 线位动辄上千点，逐帧重绘吃不消。按步长取样，首尾一定保留。
+    const CAP = 160;
+    if (pts.length > CAP) {
+      const stride = (pts.length - 1) / (CAP - 1);
+      const out = [];
+      for (let i = 0; i < CAP; i++) out.push(pts[Math.round(i * stride)]);
+      out[CAP - 1] = pts[pts.length - 1];
+      pts = out;
+    }
+    const seg = Math.max(2, Math.min(6, Math.round(maxPts / pts.length)));
+    const T = 1 / 6;   // Catmull-Rom 标准张力
+    const res = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) * T, c1y = p1[1] + (p2[1] - p0[1]) * T;
+      const c2x = p2[0] - (p3[0] - p1[0]) * T, c2y = p2[1] - (p3[1] - p1[1]) * T;
+      for (let s = 1; s <= seg; s++) {
+        const u = s / seg, v = 1 - u;
+        const a = v * v * v, b = 3 * v * v * u, c = 3 * v * u * u, d = u * u * u;
+        res.push([
+          a * p1[0] + b * c1x + c * c2x + d * p2[0],
+          a * p1[1] + b * c1y + c * c2y + d * p2[1]
+        ]);
+      }
+    }
+    return res;
+  },
+
   // 车次 -> 乘坐区段几何
   buildTrip(trainCode) {
     const t = TRAINS[trainCode];
@@ -963,17 +1075,29 @@ const Core = {
   },
 
   // 站名 -> 带坐标的站点。同名多站时按「相邻已定站点就近」消歧，
-  // 实在分不出来（彼此很远又没有参照）才抛给界面让用户选
+  // 实在分不出来（彼此很远又没有参照）才抛给界面让用户选。
+  // 方案 C：先按 id 取坐标（改名后靠别名仍解析到同一站的最新坐标），
+  // 同名多站再按「相邻已定站点就近」在候选点里挑。返回值 stops 元素为 [name, lat, lon, id]。
   resolveStops(names, override) {
-    const raw = names.map(n => Stations.resolve(n));
+    const raw = names.map(n => Stations.resolveStation(n));
     const missing = [];
     raw.forEach((r, i) => { if (!r) missing.push(names[i]); });
     if (missing.length) return { error: '车站库里没有：' + missing.join('、') };
 
+    const ids = raw.map(r => r.id || null);
     const picked = new Array(raw.length).fill(null);
+    // 已有 id 且该 id 坐标确定 → 直接采用（改名/别名场景最可靠）
+    raw.forEach((r, i) => {
+      if (r.id && r.pts.length === 1) picked[i] = r.pts[0];
+    });
+    // 用户手动消歧结果优先
     raw.forEach((r, i) => {
       const ov = override && override[r.name];
       if (ov) { picked[i] = ov; return; }
+    });
+    // 其余单候选直接采用
+    raw.forEach((r, i) => {
+      if (picked[i]) return;
       if (r.pts.length === 1) picked[i] = r.pts[0];
     });
 
@@ -1015,7 +1139,7 @@ const Core = {
       ambiguous.push({ name: r.name, opts });
     });
     if (ambiguous.length) return { ambiguous };
-    return { stops: names.map((n, i) => [raw[i].name, picked[i][0], picked[i][1]]) };
+    return { stops: names.map((n, i) => [raw[i].name, picked[i][0], picked[i][1], ids[i]]), stopIds: ids };
   },
 
   // 按站名追踪：沿全路网图逐段跑最短路，支持跨线接续
@@ -1117,7 +1241,8 @@ const Core = {
       code: code || '手录', lineId: null,
       lineName: top.length ? top.join('、') : '自定义线路',
       source, from: stops[0][0], to: stops[stops.length - 1][0],
-      stops, segs, coords, km: Math.round(km),
+      stops, stopIds: r.stopIds || stops.map(s => s[3] || null),
+      segs, coords, km: Math.round(km),
       pref: pref || null, kindKm,
       segKey: 'st:' + stops[0][0] + '>' + stops[stops.length - 1][0] +
               (pref ? '@' + pref : '')
@@ -1174,6 +1299,7 @@ let FOCUS = false;              // 铁路专注：隐藏公路文字注记与 PO
 let FORCE_INVERT = false;       // 官方夜间样式不生效时的 CSS 反色兜底
 let SHOW_LABELS = false;        // 是否在站点圆点上叠加站名文字（独立 MultiLabel 图层）
 let LINE_W = 0.6;               // 走过的线路（lit）宽度系数，滑块控制，范围 0~1、步长 0.2；只影响已走线路
+let ANIM = true;                // 点亮动效：新行程保存后用贝塞尔曲线逐帧生长绘制（默认开）
 const KC = () => THEME_COLOR[THEME];   // 取当前主题配色
 // 走过的线路实际像素宽度：0~1 映射到 1~8px
 const litWidth = () => 1 + LINE_W * 7;
@@ -1218,6 +1344,8 @@ const MapAdapter = {
       else if (localStorage.getItem('RW_LABELS') === '0') SHOW_LABELS = false;
       const lw = parseFloat(localStorage.getItem('RW_LINEW'));
       if (!isNaN(lw) && lw >= 0 && lw <= 1) LINE_W = lw;
+      if (localStorage.getItem('RW_ANIM') === '0') ANIM = false;
+      else if (localStorage.getItem('RW_ANIM') === '1') ANIM = true;
     } catch (e) {}
     THEME = themeOfBase(BASE);
     this.syncThemeClass();
@@ -1312,15 +1440,52 @@ const MapAdapter = {
       geometries: []
     });
 
+    // 选中车站高亮：蓝色圆点；起点/终点额外做「连续缩放」脉冲，经停站保持静态
+    // 用 viewBox 矢量 SVG，任意显示尺寸都按目标分辨率栅格化，不糊
+    const dotPick = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='15' fill='rgba(24,95,165,0.18)' stroke='%23185FA5' stroke-width='3'/%3E%3Ccircle cx='18' cy='18' r='6' fill='%23185FA5' stroke='%23ffffff' stroke-width='2.5'/%3E%3C/svg%3E";
+    // 预生成连续尺寸样式 pH0..pH12（18~30px），逐帧按相位选档，避免每帧 new 样式
+    const PICK_MIN = 18, PICK_MAX = 30, PICK_STEPS = PICK_MAX - PICK_MIN;
+    const pickStyles = {};
+    for (let s = 0; s <= PICK_STEPS; s++) {
+      const w = PICK_MIN + s;
+      pickStyles['pH' + s] = new TMap.MarkerStyle({ width: w, height: w, src: dotPick, anchor: { x: w / 2, y: w / 2 } });
+    }
+    this.PICK_STEPS = PICK_STEPS;
+    this.pickLayer = new TMap.MultiMarker({ map: this.map, styles: pickStyles, geometries: [] });
+    this._hlList = []; this._hlRaf = null; this._hlActive = false; this._hlStart = 0;
+    // 高亮车站的站名文字（独立 MultiLabel，黑底灰字提升可见度）
+    this.pickLabel = new TMap.MultiLabel({
+      map: this.map,
+      styles: { pick: new TMap.LabelStyle({
+        color: '#e6e6e6', size: 12, offset: { x: 12, y: -10 }, angle: 0,
+        backgroundColor: 'rgba(0,0,0,0.8)', padding: '2px 5px', borderRadius: 3
+      }) },
+      geometries: []
+    });
+
+    // 点亮动画专用图层：与主 lit 图层分开，动画期间主图层跳过该行程，避免重影
+    this.animLayer = new TMap.MultiPolyline({ map: this.map, styles: this.litStyles(), geometries: [] });
+    this.animGlow = new TMap.MultiPolyline({
+      map: this.map,
+      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: this.glowW(), borderWidth: 0, lineCap: 'round' }) },
+      geometries: []
+    });
+    // 动画头部光点：跟着曲线末端走，像列车在跑
+    const dotHead = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Ccircle cx='9' cy='9' r='7.5' fill='rgba(245,166,35,0.30)'/%3E%3Ccircle cx='9' cy='9' r='3.5' fill='%23f5a623' stroke='%23ffffff' stroke-width='1.5'/%3E%3C/svg%3E";
+    this.animDot = new TMap.MultiMarker({
+      map: this.map,
+      styles: { head: new TMap.MarkerStyle({ width: 18, height: 18, src: dotHead, anchor: { x: 9, y: 9 } }) },
+      geometries: []
+    });
+
     // 站名文字图层（独立于站点圆点，避免污染打点逻辑）。默认隐藏，由「显示站名」开关开启。
+    // 黑底灰字（rgba 黑底 + 浅灰字），在亮/暗底图上都清晰
     this.labelLayer = new TMap.MultiLabel({
       map: SHOW_LABELS ? this.map : null,
       styles: {
         label: new TMap.LabelStyle({
-          color: THEME === 'dark' ? '#e8eaed' : '#333333',
-          size: 12,
-          offset: { x: 0, y: -10 },
-          angle: 0
+          color: '#cfcfcf', size: 12, offset: { x: 0, y: -12 }, angle: 0,
+          backgroundColor: 'rgba(0,0,0,0.75)', padding: '2px 5px', borderRadius: 3
         })
       },
       geometries: []
@@ -1339,6 +1504,7 @@ const MapAdapter = {
         this.map.on('center_changed', relabel);
       }
     } catch (e) {}
+    // 选中车站（手动选的出发/到达/经停）的交互提示由高亮/脉冲层本身承担，此处不再绑定 Hover
   },
 
   ready() { return !!this.map; },
@@ -1474,6 +1640,8 @@ const MapAdapter = {
     const litStations = {};
     const litGeoms = [];
     trips.forEach((t, idx) => {
+      // 正在做点亮动画的行程由 animLayer 逐帧画，主图层跳过它，否则会先闪一下完整线
+      if (t === this._animTrip) return;
       // 一趟行程可能跨类型（前半程高铁、后半程普速），按类型拆成多段分别着色
       const segs = (t.segs && t.segs.length) ? t.segs
         : [{ kind: (GEOM[t.lineId] && GEOM[t.lineId].kind) || 'conventional', coords: t.coords }];
@@ -1533,11 +1701,10 @@ const MapAdapter = {
     ensureStationDegree();
     const map = this.map;
     let zoom = (map && map.getZoom) ? map.getZoom() : 10;
-    // 缩放分级：越缩小只标大站（枢纽度高者）
+    // 缩放分级：已走站本就稀疏，默认全国概览(zoom 4.6)也应显示；仅在极远缩放时过滤枢纽避免铺满
     let minDeg;
-    if (zoom >= 11) minDeg = 0;        // 放大：显示全部已走站
-    else if (zoom >= 7) minDeg = 2;    // 中等：枢纽及以上
-    else minDeg = 4;                   // 缩小：仅特大枢纽
+    if (zoom >= 4) minDeg = 0;         // 正常及放大：显示全部已走站（按视口裁剪即可，不会拥挤）
+    else minDeg = 2;                   // 极远的全国概览：仅枢纽
     // 视口裁剪（带外扩边距，避免边缘闪烁）
     let bnd = null;
     if (map && map.getBounds) {
@@ -1556,6 +1723,127 @@ const MapAdapter = {
       geoms.push({ id: 'lb_' + (i++), styleId: 'label', position: new TMap.LatLng(it.lat, it.lon), content: it.name });
     });
     this.labelLayer.setGeometries(geoms);
+  },
+
+  // 选中车站高亮：传 {lat,lon,name,end} 数组；end=true 的起点/终点做「反复缩放」脉冲，经停站保持静态
+  highlightStations(list) {
+    if (!this.pickLayer) return 0;
+    this._hlList = (list || []).map(p => ({
+      lat: Array.isArray(p) ? p[0] : p.lat,
+      lon: Array.isArray(p) ? p[1] : p.lon,
+      name: Array.isArray(p) ? '' : (p.name || ''),
+      end: Array.isArray(p) ? false : !!p.end
+    }));
+    // 先停掉旧的动画循环（防止输入防抖多次触发时叠加多个 tick）
+    this._hlActive = false;
+    if (this._hlRaf) { cancelAnimationFrame(this._hlRaf); this._hlRaf = null; }
+    this._renderHighlight();   // 静态首帧（端点 pH0）
+    this._renderLabels();
+    this._syncPulse();
+    return this._hlList.filter(p => isFinite(p.lat) && isFinite(p.lon)).length;
+  },
+  // 只重画高亮圆点；ts 为 rAF 时间戳时按相位连续缩放端点，否则静态（pH0）
+  _renderHighlight(ts) {
+    if (!this.pickLayer) return;
+    let scaleIdx = 0;
+    if (ts != null && this._hlActive) {
+      // 半周期 850ms 的一个完整呼吸（cos 往复，端点尺寸在最小/最大间平滑过渡，无突变）
+      const phase = ((ts - this._hlStart) / 850) * Math.PI;
+      const k = 0.5 - 0.5 * Math.cos(phase);
+      scaleIdx = Math.round(this.PICK_STEPS * k);
+      if (scaleIdx < 0) scaleIdx = 0; else if (scaleIdx > this.PICK_STEPS) scaleIdx = this.PICK_STEPS;
+    }
+    const geoms = [];
+    let i = 0;
+    (this._hlList || []).forEach(p => {
+      if (!isFinite(p.lat) || !isFinite(p.lon)) return;
+      const st = p.end ? ('pH' + scaleIdx) : 'pH0';
+      geoms.push({ id: 'pk' + (i++), styleId: st, position: new TMap.LatLng(p.lat, p.lon) });
+    });
+    this.pickLayer.setGeometries(geoms);
+  },
+  // 标签独立渲染（不参与每帧重绘，避免文字闪烁/多余开销）
+  _renderLabels() {
+    if (!this.pickLabel) return;
+    const lbls = [];
+    let j = 0;
+    (this._hlList || []).forEach(p => {
+      if (!isFinite(p.lat) || !isFinite(p.lon)) return;
+      if (p.name) lbls.push({ id: 'pl_' + (j++), styleId: 'pick', position: new TMap.LatLng(p.lat, p.lon), content: p.name });
+    });
+    this.pickLabel.setGeometries(lbls);
+  },
+  // 仅在有端点高亮时启动连续缩放动画（requestAnimationFrame 逐帧）；清空或仅经停时停止
+  _syncPulse() {
+    if (!this.map) return;
+    const hasEnd = this._hlList && this._hlList.some(p => p.end);
+    if (hasEnd && !this._hlRaf) {
+      this._hlActive = true;
+      this._hlStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const tick = (ts) => {
+        if (!this._hlActive) { this._hlRaf = null; return; }
+        this._renderHighlight(ts);
+        this._hlRaf = requestAnimationFrame(tick);
+      };
+      this._hlRaf = requestAnimationFrame(tick);
+    } else if (!hasEnd && this._hlRaf) {
+      this._hlActive = false;
+      cancelAnimationFrame(this._hlRaf);
+      this._hlRaf = null;
+    }
+  },
+
+  // 标记某条行程「由动画负责绘制」，render() 会跳过它
+  holdTrip(t) { this._animTrip = t || null; },
+  isAnimating() { return !!this._animTrip; },
+
+  // 贝塞尔曲线点亮动画：把行程折线平滑成曲线后逐帧推进，结束时回调交给主图层
+  animateTrip(t, done) {
+    if (!this.ready()) { done && done(); return; }
+    // 上一条还没跑完就来了新的：先把上一条补画完整，别让它消失在地图上
+    if (this._animTrip && this._animTrip !== t) {
+      this._animTrip = null;
+      this.render(this._lastTrips || []);
+    }
+    if (this._animRaf) { cancelAnimationFrame(this._animRaf); this._animRaf = null; }
+    // 清掉上一条动画的残留（连续导入多段时，上一条可能停在中途）
+    if (this.animLayer) {
+      this.animLayer.setGeometries([]);
+      this.animGlow.setGeometries([]);
+      this.animDot.setGeometries([]);
+    }
+    const raw = ((t && t.coords) || []).filter(p => p && isFinite(p[0]) && isFinite(p[1]));
+    if (raw.length < 2 || !this.animLayer) {
+      this._animTrip = null;
+      done && done();
+      return;
+    }
+    const kind = (t.segs && t.segs[0] && t.segs[0].kind)
+      || (t.lineId && GEOM[t.lineId] && GEOM[t.lineId].kind) || 'conventional';
+    const path = Core.smoothPath(raw, 320).map(p => new TMap.LatLng(p[0], p[1]));
+    const n = path.length;
+    // 时长按里程缩放，短途也留够观感时间
+    const dur = Math.min(1800, Math.max(800, (t.km || 200) * 1.1));
+    const nowMs = () => (window.performance && performance.now) ? performance.now() : Date.now();
+    const t0 = nowMs();
+    this._animTrip = t;
+    const step = () => {
+      const k = Math.min(1, (nowMs() - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);        // easeOutCubic：起步快、收尾稳
+      const cut = Math.max(2, Math.round(e * n));
+      const seg = path.slice(0, cut);
+      this.animLayer.setGeometries([{ id: 'anim', styleId: 'lit_' + kind, paths: seg }]);
+      this.animGlow.setGeometries([{ id: 'animg', styleId: 'glow', paths: seg }]);
+      this.animDot.setGeometries([{ id: 'animp', styleId: 'head', position: seg[cut - 1] }]);
+      if (k < 1) { this._animRaf = requestAnimationFrame(step); return; }
+      this._animRaf = null;
+      this.animLayer.setGeometries([]);
+      this.animGlow.setGeometries([]);
+      this.animDot.setGeometries([]);
+      this._animTrip = null;
+      done && done();
+    };
+    this._animRaf = requestAnimationFrame(step);
   },
 
   focusTrip(trip) {
@@ -1581,22 +1869,51 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.7.0';
 const APP_DATE = '2026-10-10';
 
 /* ============================================================
    Store：行程存档（本机持久化 + 多档案 + 导出导入）
 
-   只存「源数据」(intent)：出发/到达/经停/车次/偏好/日期，约 100 字节一条；
+   只存「源数据」(intent)：出发/到达/经停/车次/偏好/日期 + 稳定车站 id，约 100 字节一条；
    路径几何与里程在加载时用 Core 现算——存档小得多，而且路网数据升级后
    老行程会自动重算成更准的线位。
+
+   v2 起额外存 fromId/viaIds/toId（OSM node id）：车站改名后，老行程靠 id
+   仍能解析到同一个站的最新坐标，不会停在老站位上（v1 存档在 load 时自动补 id）。
 
    将来接多用户（微信云开发 / 自建后端）只需替换本模块的实现，
    上层业务代码一行都不用动。
    ============================================================ */
 const Store = {
-  VER: 1,
+  VER: 2,
   _cur: 'default',
+
+  // 方案 C 存档迁移：v1（只存站名）-> v2（补上稳定车站 id）。
+  // 旧条目只有 from/to/via 站名，这里按现名或别名反查 id 补进 fromId/viaIds/toId；
+  // 查不到的保留原名并打missingId 标记，绝不丢数据。迁移只补字段，不改用户填的站名。
+  _migrate(items) {
+    const out = [];
+    items.forEach(it => {
+      if (it.kind === 'code') { out.push(it); return; }   // 车次条目本来就靠车次号，不涉及站 id
+      if (!it.from && !it.to) { out.push(it); return; }
+      const names = [it.from].concat(it.via || [], [it.to]);
+      const ids = names.map(n => {
+        if (!n) return null;
+        try { return Stations.idOf(n); } catch (e) { return null; }
+      });
+      if (it.fromId == null) it.fromId = ids[0] || null;
+      if (it.toId == null) it.toId = ids[ids.length - 1] || null;
+      if (!it.viaIds) {
+        const via = ids.slice(1, -1);
+        if (via.some(x => x)) it.viaIds = via;
+      }
+      // 有站名解析不出 id：标记一下（站名可能已变更或库里没有），界面可提示核对
+      it.missingId = ids.some(x => !x);
+      out.push(it);
+    });
+    return out;
+  },
 
   init() {
     try {
@@ -1658,7 +1975,9 @@ const Store = {
       if (!raw) return [];
       const d = JSON.parse(raw);
       const items = (d && d.items) ? d.items : (Array.isArray(d) ? d : []);
-      return items.filter(x => x && (x.code || (x.from && x.to)));
+      const valid = items.filter(x => x && (x.code || (x.from && x.to)));
+      // v1 -> v2：补稳定车站 id（幂等，重复加载不会重复处理）
+      return this._migrate(valid);
     } catch (e) { return []; }
   },
 
@@ -1752,11 +2071,36 @@ const App = {
     ['stFrom', 'stTo', 'stVia'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener('input', () => this.showSug(id));
+      el.addEventListener('input', () => { this.showSug(id); this.queueHighlight(); });
       el.addEventListener('focus', () => this.showSug(id));
       el.addEventListener('blur', () => setTimeout(() => this.hideSug(), 200));
       el.addEventListener('keydown', e => { if (e.key === 'Enter') this.addByStations(); });
     });
+  },
+
+  // 输入防抖后再高亮，避免每敲一个字都去查一遍车站库
+  queueHighlight() {
+    if (this._hlT) clearTimeout(this._hlT);
+    this._hlT = setTimeout(() => this.syncStationHighlight(), 180);
+  },
+
+  // 把输入框里选中的车站高亮到地图上。同名多站时全部圈出来，顺带提示需要消歧。
+  syncStationHighlight() {
+    if (!MapAdapter.ready()) return 0;
+    const pts = [];
+    const push = (nm, isEnd) => {
+      if (!nm) return;
+      // 已经消歧选定过的，只高亮用户选的那一个
+      const ov = this._stOverride && this._stOverride[nm];
+      if (ov) { pts.push({ lat: ov[0], lon: ov[1], name: nm, end: isEnd }); return; }
+      const r = Stations.resolve(nm);
+      if (r && r.pts) r.pts.forEach(p => pts.push({ lat: p[0], lon: p[1], name: nm, end: isEnd }));
+    };
+    push((document.getElementById('stFrom').value || '').trim(), true);
+    push((document.getElementById('stTo').value || '').trim(), true);
+    ((document.getElementById('stVia').value || '').trim())
+      .split(/[,，、\s]+/).filter(Boolean).forEach(v => push(v, false));
+    return MapAdapter.highlightStations(pts);
   },
 
   currentToken(id) {
@@ -1793,6 +2137,7 @@ const App = {
       el.value = name;
     }
     this.hideSug();
+    this.syncStationHighlight();
     el.focus();
   },
 
@@ -1831,11 +2176,23 @@ const App = {
     // 只保存与本次行程相关的同名站消歧结果，别把整张 override 表写进存档
     const ov = {};
     if (this._stOverride) names.forEach(n => { if (this._stOverride[n]) ov[n] = this._stOverride[n]; });
+    // 方案 C：把解析出的稳定车站 id 一并存进存档（fromId/viaIds/toId）。
+    // 以后车站改名，老行程靠这些 id 仍能定位到同一个站的最新坐标，不会停在老站位上。
+    const sids = r.stopIds || [];
+    const fromId = sids[0] || null;
+    const toId = sids[sids.length - 1] || null;
+    const viaIds = sids.slice(1, -1);
     const t = this.addItem({
       kind: 'stops', from, via, to, code: '', pref: this._pref || null,
-      ov: Object.keys(ov).length ? ov : null, date: '', createdAt: Date.now()
+      ov: Object.keys(ov).length ? ov : null, date: '', createdAt: Date.now(),
+      fromId, toId, viaIds: viaIds.some(x => x) ? viaIds : null
     });
     if (!t) return;
+    // 提交成功后清空已输入的车站、消歧结果与候选框，并刷新高亮（避免下次误用旧值）
+    ['stFrom', 'stTo', 'stVia'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+    this._stOverride = {};
+    const pickBox = document.getElementById('stPick'); if (pickBox) pickBox.innerHTML = '';
+    this.syncStationHighlight();
     const tag = t.source.indexOf('straight') === 0 ? '（附近无线路数据，用直线示意）'
       : (t.source === 'osm' ? '（沿真实轨道）' : '（部分区段无数据）');
     this.toast('已保存 ' + t.from + '→' + t.to + ' ' + t.km + 'km ' + (this.prefWarn(t) || tag));
@@ -1858,6 +2215,7 @@ const App = {
     this._stOverride[name] = [lat, lon];
     const box = document.getElementById('stPick');
     if (box) box.innerHTML = '';
+    this.syncStationHighlight();
     this.addByStations();
   },
 
@@ -1892,6 +2250,7 @@ const App = {
     const inv = document.getElementById('chkInvert'); if (inv) inv.checked = FORCE_INVERT;
     const row = document.getElementById('invertRow'); if (row) row.style.display = dark ? '' : 'none';
     const cl = document.getElementById('chkLabels'); if (cl) cl.checked = SHOW_LABELS;
+    const ca = document.getElementById('chkAnim'); if (ca) ca.checked = ANIM;
     const lw = document.getElementById('lineW');
     if (lw) { lw.value = LINE_W; const v = document.getElementById('lwVal'); if (v) v.textContent = LINE_W.toFixed(1); }
     this.paintLegend();
@@ -1942,6 +2301,12 @@ const App = {
     if (!MapAdapter.ready()) return;
     MapAdapter.setLineW(v);
     this.syncBaseUI();
+  },
+  setAnim(on) {
+    ANIM = !!on;
+    try { localStorage.setItem('RW_ANIM', ANIM ? '1' : '0'); } catch (e) {}
+    this.syncBaseUI();
+    this.toast(on ? '点亮动效已开启（新行程沿曲线生长）' : '点亮动效已关闭（直接显示）');
   },
 
   fillSample() {
@@ -2024,13 +2389,28 @@ const App = {
   },
 
   // 源数据 -> 渲染结果。算不出来的（站名已停用等）留占位而不是丢弃，
-  // 免得列表下标错位、删错行程
+  // 免得列表下标错位、删错行程。
+  // 方案 C：若存档里带了稳定车站 id（fromId/viaIds/toId），且这些 id 解析出的站名
+  // 与存档里的站名不同（说明车站已改名），就改用 id 解析出的新站名与最新坐标——
+  // 这正是「站名更新后旧行程还停在老站位上」的修复点。
   hydrate(it) {
     let r = null;
     if (it.kind === 'code' && TRAINS[it.code]) r = Core.buildTrip(it.code);
     if ((!r || r.error) && it.from && it.to) {
-      r = Core.buildTripByStops([it.from].concat(it.via || [], [it.to]),
-        it.code || '手录', it.ov || null, it.pref || null);
+      let names = [it.from].concat(it.via || [], [it.to]);
+      // 方案 C：存档里带了稳定车站 id，就以 id 为准。
+      // 若该 id 解析出的现名与存档里的旧名不同（车站改名了），改用现名——
+      // 这样老行程会自动跟到新站位，而不是停在老站上。
+      const sids = [it.fromId].concat(it.viaIds || [], [it.toId]);
+      if (sids.some(x => x != null)) {
+        names = names.map((n, i) => {
+          const sid = sids[i];
+          if (sid == null) return n;
+          const cur = Stations.nameOfId(sid);
+          return cur || n;
+        });
+      }
+      r = Core.buildTripByStops(names, it.code || '手录', it.ov || null, it.pref || null);
     }
     if (!r || r.error || r.ambiguous) {
       const t0 = TRAINS[it.code] || {};
@@ -2039,11 +2419,13 @@ const App = {
         from: it.from || t0.from || '—', to: it.to || t0.to || '—',
         stops: [], segs: [], coords: [], km: 0, kindKm: {},
         pref: it.pref || null, segKey: 'missing:' + this._key(it),
-        date: it.date || '', note: it.note || ''
+        date: it.date || '', note: it.note || '',
+        missingId: !!it.missingId
       };
     }
     r.date = it.date || '';
     r.note = it.note || '';
+    r.missingId = !!it.missingId;
     return r;
   },
 
@@ -2071,7 +2453,12 @@ const App = {
     if (s.error) { this.items.pop(); this.toast(s.error); return null; }
     const t = this.hydrate(it);
     this.trips.push(t);
+    // 动效开启且算得出线位时，先标记这条由动画绘制：否则主图层会先画完整条再被动画擦掉，看着闪一下
+    const canAnim = ANIM && MapAdapter.ready()
+      && t.coords && t.coords.length >= 2 && t.source !== 'missing';
+    if (canAnim) MapAdapter.holdTrip(t);
     this.refresh();
+    if (canAnim) MapAdapter.animateTrip(t, () => this.refresh());
     return t;
   },
 
