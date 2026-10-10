@@ -15,6 +15,11 @@
     -webkit-overflow-scrolling: touch;
   }
   .panel select, .panel textarea, .panel button { position: relative; z-index: 2; }
+  .panel input[type="range"] { width: 100%; margin: 2px 0 0; accent-color: #2f6fed; cursor: pointer; }
+  .range-row { display: flex; align-items: center; gap: 10px; margin: 2px 0 8px; }
+  .range-val { font-size: 12px; color: #2f6fed; font-variant-numeric: tabular-nums; min-width: 30px; text-align: right; }
+  .sec-sub { font-size: 12px; color: #666; margin: 10px 0 4px; }
+  body.dark .sec-sub { color: #8b9096; }
   .panel h1 { font-size: 15px; font-weight: 500; margin: 0 0 4px; }
   .panel .sub { font-size: 12px; color: #8a8a8a; margin: 0 0 14px; line-height: 1.5; }
   .sec-title { font-size: 12px; color: #666; margin: 16px 0 8px; }
@@ -267,6 +272,13 @@
     <label class="net-chk"><input type="checkbox" id="chkFog" onchange="App.setFog(this.checked)"><i></i>迷雾地图（未走线路变暗）</label>
     <label class="net-chk"><input type="checkbox" id="chkFocus" onchange="App.setFocus(this.checked)"><i></i>铁路专注（弱化公路/标注）</label>
     <label class="net-chk" id="invertRow" style="display:none;"><input type="checkbox" id="chkInvert" onchange="App.toggleInvert(this.checked)"><i></i>强制反色<span>（底图没变暗时勾它）</span></label>
+    <label class="net-chk"><input type="checkbox" id="chkLabels" onchange="App.setLabels(this.checked)"><i></i>显示站名（在站点圆点上标注名称）</label>
+  </div>
+
+  <div class="sec-sub">线路宽度</div>
+  <div class="range-row">
+    <input type="range" id="lineW" min="0.5" max="8" step="0.5" value="2" oninput="App.setLineW(parseFloat(this.value))">
+    <span class="range-val" id="lwVal">2.0</span>
   </div>
 
   <div class="sec-title">路网显示</div>
@@ -1160,6 +1172,8 @@ let BASE = 'normal';            // 底图：normal(正常) / black(纯黑) / sat
 let FOG = true;                 // 迷雾地图：未走过的全路网变暗，仅已坐线路高亮
 let FOCUS = false;              // 铁路专注：隐藏公路文字注记与 POI，弱化非铁路信息
 let FORCE_INVERT = false;       // 官方夜间样式不生效时的 CSS 反色兜底
+let SHOW_LABELS = false;        // 是否在站点圆点上叠加站名文字（独立 MultiLabel 图层）
+let LINE_W = 2;                 // 路网线条宽度（滑块控制，范围 0.5~8）
 const KC = () => THEME_COLOR[THEME];   // 取当前主题配色
 // 底图类型 -> 线条明暗主题：正常图用浅色线条，纯黑/卫星用亮色线条
 const themeOfBase = b => (b === 'normal' ? 'light' : 'dark');
@@ -1186,6 +1200,10 @@ const MapAdapter = {
       else if (localStorage.getItem('RW_FOG') === '1') FOG = true;
       if (localStorage.getItem('RW_FOCUS') === '1') FOCUS = true;
       if (localStorage.getItem('RW_INVERT') === '1') FORCE_INVERT = true;
+      if (localStorage.getItem('RW_LABELS') === '1') SHOW_LABELS = true;
+      else if (localStorage.getItem('RW_LABELS') === '0') SHOW_LABELS = false;
+      const lw = parseFloat(localStorage.getItem('RW_LINEW'));
+      if (!isNaN(lw) && lw >= 0.5 && lw <= 8) LINE_W = lw;
     } catch (e) {}
     THEME = themeOfBase(BASE);
     this.syncThemeClass();
@@ -1260,7 +1278,7 @@ const MapAdapter = {
 
     this.glowLayer = new TMap.MultiPolyline({
       map: this.map,
-      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: 14, borderWidth: 0, lineCap: 'round' }) },
+      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: this.glowW(), borderWidth: 0, lineCap: 'round' }) },
       geometries: []
     });
     this.litLayer = new TMap.MultiPolyline({
@@ -1279,33 +1297,48 @@ const MapAdapter = {
       },
       geometries: []
     });
+
+    // 站名文字图层（独立于站点圆点，避免污染打点逻辑）。默认隐藏，由「显示站名」开关开启。
+    this.labelLayer = new TMap.MultiLabel({
+      map: SHOW_LABELS ? this.map : null,
+      styles: {
+        label: new TMap.LabelStyle({
+          color: THEME === 'dark' ? '#e8eaed' : '#333333',
+          size: 12,
+          offset: { x: 0, y: -10 },
+          angle: 0
+        })
+      },
+      geometries: []
+    });
   },
 
   ready() { return !!this.map; },
 
-  // 底图网样式（base_=行程线所在线路，net_=全路网）
+  // 底图网样式（base_=行程线所在线路，net_=全路网）。宽度随 LINE_W 滑块变化。
   netStyles() {
-    const C = KC(); const s = {};
+    const C = KC(); const s = {}; const w = LINE_W;
     Object.keys(C).forEach(k => {
       if (FOG) {
         // 迷雾地图：未走过的全路网压暗，仅已坐线路（lit 图层）保持高亮
-        s['base_' + k] = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.22), width: 1.5, borderWidth: 0, lineCap: 'round' });
-        s['net_' + k]  = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.16), width: 1.2, borderWidth: 0, lineCap: 'round' });
+        s['base_' + k] = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.22), width: Math.max(0.5, w * 0.75), borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: hexA(C[k].base, 0.16), width: Math.max(0.5, w * 0.6), borderWidth: 0, lineCap: 'round' });
       } else {
-        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: 3, borderWidth: 0, lineCap: 'round' });
-        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: 2, borderWidth: 0, lineCap: 'round' });
+        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: w + 1, borderWidth: 0, lineCap: 'round' });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: w, borderWidth: 0, lineCap: 'round' });
       }
     });
     return s;
   },
   litStyles() {
-    const C = KC(); const s = {};
+    const C = KC(); const s = {}; const w = LINE_W + 3;
     Object.keys(C).forEach(k => {
-      s['lit_' + k] = new TMap.PolylineStyle({ color: C[k].lit, width: 5, borderWidth: 0, lineCap: 'round' });
+      s['lit_' + k] = new TMap.PolylineStyle({ color: C[k].lit, width: w, borderWidth: 0, lineCap: 'round' });
     });
     return s;
   },
   glowColor() { return THEME === 'dark' ? 'rgba(255,176,32,0.30)' : 'rgba(245,166,35,0.22)'; },
+  glowW() { return Math.max(8, (LINE_W + 3) * 2.6); },
 
   syncThemeClass() {
     document.body.classList.toggle('dark', THEME === 'dark');
@@ -1324,7 +1357,7 @@ const MapAdapter = {
     this.convLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.conv });
     this.glowLayer = new TMap.MultiPolyline({
       map: this.map,
-      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: 14, borderWidth: 0, lineCap: 'round' }) },
+      styles: { glow: new TMap.PolylineStyle({ color: this.glowColor(), width: this.glowW(), borderWidth: 0, lineCap: 'round' }) },
       geometries: (this._lastGlow || [])
     });
     this.litLayer = new TMap.MultiPolyline({ map: this.map, styles: this.litStyles(), geometries: (this._lastLit || []) });
@@ -1385,6 +1418,20 @@ const MapAdapter = {
     this._rebuildLayers();
   },
 
+  // 显示/隐藏站名文字图层（独立 MultiLabel，不影响站点圆点）
+  setLabels(on) {
+    SHOW_LABELS = !!on;
+    try { localStorage.setItem('RW_LABELS', SHOW_LABELS ? '1' : '0'); } catch (e) {}
+    if (this.labelLayer) this.labelLayer.setMap(SHOW_LABELS ? this.map : null);
+  },
+
+  // 线路宽度滑块（范围 0.5~8，持久化）。改完重建折线图层即时生效。
+  setLineW(v) {
+    LINE_W = Math.min(8, Math.max(0.5, v));
+    try { localStorage.setItem('RW_LINEW', String(LINE_W)); } catch (e) {}
+    this._rebuildLayers();
+  },
+
   // 切换高铁路网 / 普速路网显隐。
   // TMap 的 MultiPolyline 没有稳定的 setVisible 接口，用 setMap(null) 摘除最可靠
   setNetVisible(which, on) {
@@ -1436,6 +1483,25 @@ const MapAdapter = {
       marks.push({ id: 'm' + (n++), styleId: 'lit', position: new TMap.LatLng(s[1], s[2]) });
     });
     this.stationLayer.setGeometries(marks);
+
+    // 站名文字：与站点圆点一一对应（按坐标去重，避免同站多线重复标注）
+    const labelGeoms = [];
+    const seenLabel = {};
+    const pushLabel = (s, name) => {
+      const key = name + '@' + s[1].toFixed(4) + ',' + s[2].toFixed(4);
+      if (seenLabel[key]) return;
+      seenLabel[key] = 1;
+      labelGeoms.push({ id: 'lb_' + (n++), styleId: 'label', position: new TMap.LatLng(s[1], s[2]), content: name });
+    };
+    Object.keys(LINES).forEach(id => {
+      LINES[id].stations.forEach(s => pushLabel(s, s[0]));
+    });
+    Object.keys(litStations).forEach(nm => {
+      if (inLines[nm]) return;
+      pushLabel(litStations[nm], nm);
+    });
+    this._lastLabels = labelGeoms;
+    if (this.labelLayer) this.labelLayer.setGeometries(labelGeoms);
   },
 
   focusTrip(trip) {
@@ -1461,7 +1527,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 const APP_DATE = '2026-10-10';
 
 /* ============================================================
@@ -1771,6 +1837,9 @@ const App = {
     const dark = THEME === 'dark';
     const inv = document.getElementById('chkInvert'); if (inv) inv.checked = FORCE_INVERT;
     const row = document.getElementById('invertRow'); if (row) row.style.display = dark ? '' : 'none';
+    const cl = document.getElementById('chkLabels'); if (cl) cl.checked = SHOW_LABELS;
+    const lw = document.getElementById('lineW');
+    if (lw) { lw.value = LINE_W; const v = document.getElementById('lwVal'); if (v) v.textContent = LINE_W.toFixed(1); }
     this.paintLegend();
   },
   syncThemeUI() { this.syncBaseUI(); },
@@ -1808,6 +1877,17 @@ const App = {
     MapAdapter.setFocus(on);
     this.syncBaseUI();
     this.toast(on ? '铁路专注：已弱化公路与标注' : '已恢复完整底图标注');
+  },
+  setLabels(on) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setLabels(on);
+    this.syncBaseUI();
+    this.toast(on ? '已显示站名' : '已隐藏站名');
+  },
+  setLineW(v) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.setLineW(v);
+    this.syncBaseUI();
   },
 
   fillSample() {
