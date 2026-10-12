@@ -150,6 +150,22 @@
   body.dark .seg-b { background: #23262d; border-color: #383d45; color: #dfe3e8; }
   body.dark .seg-b:hover { border-color: #5b8def; color: #8fb2ff; }
   body.dark .seg-b.on { background: #3b6fd4; border-color: #3b6fd4; color: #fff; }
+  /* ---- 管理员：线路维护（?admin=1）---- */
+  .gap-item { display:flex; align-items:center; gap:6px; padding:6px 0; border-bottom:1px dashed #eee; font-size:12px; }
+  .gap-item .g-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gap-item .g-km { color:#888; font-size:11px; white-space:nowrap; }
+  .gap-item .g-net { font-size:10px; padding:1px 4px; border-radius:4px; white-space:nowrap; }
+  .gap-item .g-net.hs { background:#e6f1fb; color:#185fa5; }
+  .gap-item .g-net.cv { background:#f1efe8; color:#5f5e5a; }
+  body.dark .gap-item { border-bottom-color:#2f333a; color:#c4c9d0; }
+  body.dark .gap-item .g-net.hs { background:#1b3a5c; color:#8fb2ff; }
+  body.dark .gap-item .g-net.cv { background:#2a2d33; color:#9aa0a8; }
+  .adm-note { font-size:11px; color:#888; margin:6px 0; line-height:1.5; }
+  .adm-pick { font-size:12px; padding:8px; border:1px solid #e3e3e3; border-radius:8px; margin:6px 0; }
+  body.dark .adm-pick { border-color:#383d45; color:#e8eaed; }
+  .adm-json { width:100%; min-height:110px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+    padding:6px; border:1px solid #e3e3e3; border-radius:8px; box-sizing:border-box; }
+  body.dark .adm-json { background:#23262d; border-color:#383d45; color:#c4c9d0; }
   body.dark .trip .src.pf { color: #9aa0a8; background: #2a2d33; }
   body.dark .legend { background: rgba(25,27,32,.94); color: #c4c9d0; box-shadow: 0 2px 16px rgba(0,0,0,.55); }
   /* 兜底：官方夜间样式未生效时，用 CSS 反色把白色底图压暗 */
@@ -190,6 +206,8 @@
 <script src="stations_real.js"></script>
 <script src="stations_all.js"></script>
 <script src="aliases.js"></script>
+<script src="patches.js"></script>
+<script src="gaps.js"></script>
 </head>
 <body>
 <div id="map"></div>
@@ -309,6 +327,16 @@
   <div style="border-top:1px solid #eee;padding-top:8px;margin-top:8px;">
     <button class="btn" style="margin:0;padding:4px 0;font-size:12px;width:100%;" onclick="App.toggleKeyBox()">地图 Key 设置</button>
   </div>
+
+  <div id="adminBox" style="display:none;border-top:1px solid #eee;padding-top:10px;margin-top:8px;">
+    <div class="sec-title" style="margin-top:0;">线路维护（管理员）</div>
+    <div class="sub" style="margin:0 0 8px;font-size:11px;">
+      当前生效补丁 <b id="patchN">0</b> 条 · 待补缺口 <b id="gapN">0</b> 条
+    </div>
+    <div id="gapList"></div>
+    <div id="adminPanel"></div>
+  </div>
+
   <p class="sub" id="verLine" style="margin:10px 0 0;padding-top:8px;border-top:1px solid #eee;font-size:11px;text-align:right;"></p>
   </div>
 </div>
@@ -609,6 +637,129 @@ const Stations = {
       if (starts.length >= limit) break;
     }
     return starts.concat(contains).slice(0, limit);
+  }
+};
+
+/* ============================================================
+   Patches：线路补丁（管理员维护，方案 B）
+
+   背景：OSM 里某些区段确实没有铁路数据，导致线路断开、行程追踪被直线桥接。
+   diagnose_gaps.py 诊断出的「真缺口」清单（当前 23 条）就是待补的权威列表。
+   管理员在?admin=1 模式拾取缺口两端生成补丁，写进 patches.js 提交仓库，
+   所有用户自动受益。
+
+   合并策略
+     仓库补丁（patches.js）+ 用户本地补丁（localStorage RW_PATCHES_LOCAL），
+     本地按 id 覆盖仓库。
+   connect 补丁的处理
+     直接把「a→via→b」的折线**追加成目标线路的一条新 polyline**：
+       · 渲染层（hsLayer/convLayer/baseLayer）遍历 polylines，补丁自动被画上、同色；
+       · 走线图Net.build 也遍历 polylines，补丁两端因此进入全路网图、把缺口连通。
+     注意：BRIDGE_KM(6km) 以内的缺口 Net.bridgeComponents 已自动搭桥，
+     补了也没用，所以管理界面会过滤掉 <= 6km 的项。
+   ============================================================ */
+const Patches = {
+  LOCAL_KEY: 'RW_PATCHES_LOCAL',
+
+  all() {
+    // 仓库补丁 + 本地补丁（本地按 id 覆盖仓库）
+    const out = {};
+    (Array.isArray(window.RW_PATCHES) ? window.RW_PATCHES : []).forEach(p => { if (p && p.id) out[p.id] = p; });
+    this.local().forEach(p => { if (p && p.id) out[p.id] = p; });
+    return Object.keys(out).map(k => out[k]).filter(p => p.enabled !== false);
+  },
+
+  local() {
+    try { const v = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || '[]'); return Array.isArray(v) ? v : []; }
+    catch (e) { return []; }
+  },
+  saveLocal(list) {
+    try { localStorage.setItem(this.LOCAL_KEY, JSON.stringify(list || [])); return { ok: true }; }
+    catch (e) { return { error: '保存失败：' + e.message }; }
+  },
+  addLocal(p) {
+    const list = this.local().filter(x => x.id !== p.id);
+    list.push(p);
+    return this.saveLocal(list);
+  },
+  removeLocal(id) {
+    return this.saveLocal(this.local().filter(x => x.id !== id));
+  },
+
+  // connect补丁 -> 折线坐标数组 [[lat,lon],...]；replace 补丁返回其polylines
+  _coords(p) {
+    if (p.type === 'connect') {
+      const a = p.a, b = p.b;
+      if (!a || !b || !isFinite(a[0]) || !isFinite(a[1]) || !isFinite(b[0]) || !isFinite(b[1])) return null;
+      const via = (Array.isArray(p.via) ? p.via : []).filter(v => v && isFinite(v[0]) && isFinite(v[1]));
+      return [a].concat(via, [b]).map(q => [q[0], q[1]]);
+    }
+    if (p.type === 'replace') {
+      const pl = Array.isArray(p.polylines) ? p.polylines : null;
+      return pl && pl.length ? pl.map(c => c.map(q => [q[0], q[1]])) : null;
+    }
+    return null;
+  },
+
+  // 把补丁合并进 { HSLINES, CONVLINES, LINES_REAL }（原地修改，返回统计）
+  merge() {
+    const stats = { applied: 0, skipped: 0, added: 0 };
+    const list = this.all();
+    if (!list.length) return stats;
+
+    const patchInto = (linesObj, defaultKind) => {
+      if (!linesObj || !linesObj.lines) return;
+      list.forEach(p => {
+        const coords = this._coords(p);
+        if (!coords) { stats.skipped++; return; }
+        const kind = p.kind || defaultKind;
+        // 找到目标线路；找不到就挂到一条同名新建线上（保证补丁不会白写）
+        let target = linesObj.lines[p.line];
+        if (!target) {
+          target = linesObj.lines[p.line] = {
+            osm_name: p.line, polylines: [], kind: kind,
+            isLink: false, _byPatch: true
+          };
+        }
+        if (p.type === 'replace') {
+          target.polylines = coords;
+        } else {
+          target.polylines = (target.polylines || []).concat([coords]);
+        }
+        stats.applied++;
+        stats.added += (p.type === 'replace' ? 1 : 1);
+      });
+    };
+
+    patchInto(window.HSLINES, 'highspeed');
+    patchInto(window.CONVLINES, 'conventional');
+    // LINES_REAL 是 9 条预置干线几何，用同样方式处理
+    const rl = window.LINES_REAL;
+    if (rl) {
+      list.forEach(p => {
+        const coords = this._coords(p);
+        if (!coords) return;
+        let target = rl[p.line];
+        if (!target) {
+          target = rl[p.line] = { osm_name: p.line, polylines: [], kind: p.kind || 'conventional', provinces: [] };
+        }
+        if (p.type === 'replace') target.polylines = coords;
+        else target.polylines = (target.polylines || []).concat([coords]);
+      });
+    }
+    return stats;
+  },
+
+  // 管理界面用：当前生效的补丁列表（带可读摘要）
+  listForAdmin() {
+    return this.all().map(p => {
+      const coords = this._coords(p) || [];
+      let km = 0;
+      for (let i = 0; i < coords.length - 1; i++) {
+        km += Core.haversine(coords[i], coords[i + 1]);
+      }
+      return { id: p.id, type: p.type, line: p.line || '—', kind: p.kind || 'conventional', km: Math.round(km), local: this.local().some(x => x.id === p.id) };
+    });
   }
 };
 
@@ -1463,6 +1614,40 @@ const MapAdapter = {
       geometries: []
     });
 
+    /* ---- 管理员补线图层（?admin=1）----
+       gapEnds : 待补缺口的两个端点（蓝/绿点 + 虚线预览）
+       gapPick : 管理员在地图上拾取的点
+       gapPrev : 实时预览的补线路径（醒目橙色）
+       纯独立图层，不影响常规渲染与存档。*/
+    const dotEndA = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Ccircle cx='14' cy='14' r='12' fill='rgba(37,99,235,0.22)' stroke='%232563eb' stroke-width='2.5'/%3E%3Ccircle cx='14' cy='14' r='4.5' fill='%232563eb'/%3E%3C/svg%3E";
+    const dotEndB = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Ccircle cx='14' cy='14' r='12' fill='rgba(22,163,74,0.22)' stroke='%2316a34a' stroke-width='2.5'/%3E%3Ccircle cx='14' cy='14' r='4.5' fill='%2316a34a'/%3E%3C/svg%3E";
+    const dotPickP = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Ccircle cx='14' cy='14' r='11' fill='rgba(234,88,12,0.28)' stroke='%23ea580c' stroke-width='3' stroke-dasharray='4 3'/%3E%3C/svg%3E";
+    this.gapLayer = new TMap.MultiMarker({
+      map: this.map,
+      styles: {
+        a: new TMap.MarkerStyle({ width: 28, height: 28, src: dotEndA, anchor: { x: 14, y: 14 } }),
+        b: new TMap.MarkerStyle({ width: 28, height: 28, src: dotEndB, anchor: { x: 14, y: 14 } }),
+        p: new TMap.MarkerStyle({ width: 28, height: 28, src: dotPickP, anchor: { x: 14, y: 14 } })
+      },
+      geometries: []
+    });
+    this.gapPrev = new TMap.MultiPolyline({
+      map: this.map,
+      styles: {
+        link: new TMap.PolylineStyle({ color: '#ea580c', width: 4, borderWidth: 0, lineCap: 'round', dashArray: [8, 6] }),
+        prev: new TMap.PolylineStyle({ color: '#f97316', width: 5, borderWidth: 1, borderColor: '#ffffff', lineCap: 'round' })
+      },
+      geometries: []
+    });
+    this.gapLabel = new TMap.MultiLabel({
+      map: this.map,
+      styles: { g: new TMap.LabelStyle({
+        color: '#ffffff', size: 12, offset: { x: 14, y: -16 }, angle: 0,
+        backgroundColor: 'rgba(0,0,0,0.82)', padding: '2px 6px', borderRadius: 3
+      }) },
+      geometries: []
+    });
+
     // 点亮动画专用图层：与主 lit 图层分开，动画期间主图层跳过该行程，避免重影
     this.animLayer = new TMap.MultiPolyline({ map: this.map, styles: this.litStyles(), geometries: [] });
     this.animGlow = new TMap.MultiPolyline({
@@ -1508,6 +1693,89 @@ const MapAdapter = {
   },
 
   ready() { return !!this.map; },
+
+  /* ============ 管理员补线（?admin=1）============
+
+     流程：选缺口 -> 高亮两个端点 -> 管理员在地图上点选修正点（可0~N 个）
+          -> 实时预览 -> 生成补丁 JSON。全部走独立图层，不干扰常规渲染。*/
+
+  // 显示某个待补缺口：标出两端点 + 虚线相连，并把地图移到缺口处
+  showGap(gap) {
+    if (!this.map || !gap) return;
+    this._gap = gap;
+    this._gapPicks = [];
+    const a = new TMap.LatLng(gap.a[0], gap.a[1]);
+    const b = new TMap.LatLng(gap.b[0], gap.b[1]);
+    this.gapLayer.setGeometries([
+      { id: 'ga', styleId: 'a', position: a },
+      { id: 'gb', styleId: 'b', position: b }
+    ]);
+    this.gapLabel.setGeometries([
+      { id: 'gla', styleId: 'g', position: a, content: 'A 端点' },
+      { id: 'glb', styleId: 'g', position: b, content: 'B 端点' }
+    ]);
+    this.gapPrev.setGeometries([{
+      id: 'glink', styleId: 'link',
+      paths: [new TMap.LatLng(gap.a[0], gap.a[1]), new TMap.LatLng(gap.b[0], gap.b[1])]
+    }]);
+    // 视野：两端点都装下（粗略按经度跨度估算缩放）
+    const dLat = Math.abs(gap.a[0] - gap.b[0]);
+    const dLon = Math.abs(gap.a[1] - gap.b[1]);
+    const span = Math.max(dLat, dLon * Math.cos(gap.a[0] * Math.PI / 180), 0.05);
+    const zoom = span > 4 ? 5 : span > 2 ? 6 : span > 1 ? 7 : span > 0.4 ? 8 : span > 0.15 ? 9 : 10;
+    try {
+      this.map.setCenter(new TMap.LatLng((gap.a[0] + gap.b[0]) / 2, (gap.a[1] + gap.b[1]) / 2));
+      this.map.setZoom(zoom);
+    } catch (e) {}
+  },
+
+  // 管理员在地图上点了一下：记录为途经点并刷新预览
+  addGapPick(lat, lon) {
+    if (!this._gap) return 0;
+    this._gapPicks = this._gapPicks || [];
+    this._gapPicks.push([lat, lon]);
+    this.renderGapPreview();
+    return this._gapPicks.length;
+  },
+  undoGapPick() {
+    if (!this._gapPicks || !this._gapPicks.length) return 0;
+    this._gapPicks.pop();
+    this.renderGapPreview();
+    return this._gapPicks.length;
+  },
+
+  // 重画预览：端点 -> 途经点 -> 端点，橙线加白边
+  renderGapPreview() {
+    if (!this.map || !this._gap) return;
+    const g = this._gap;
+    const pts = [g.a].concat(this._gapPicks || [], [g.b])
+      .map(p => new TMap.LatLng(p[0], p[1]));
+    const geoms = [{ id: 'gprev', styleId: 'prev', paths: pts }];
+    this.gapPrev.setGeometries(geoms);
+    const mk = (this._gapPicks || []).map((p, i) => ({
+      id: 'gp' + i, styleId: 'p', position: new TMap.LatLng(p[0], p[1])
+    }));
+    const base = [
+      { id: 'ga', styleId: 'a', position: new TMap.LatLng(g.a[0], g.a[1]) },
+      { id: 'gb', styleId: 'b', position: new TMap.LatLng(g.b[0], g.b[1]) }
+    ];
+    this.gapLayer.setGeometries(base.concat(mk));
+  },
+
+  gapPath() {
+    const g = this._gap;
+    if (!g) return null;
+    return [g.a].concat(this._gapPicks || [], [g.b]);
+  },
+
+  // 清空管理员图层
+  clearGap() {
+    this._gap = null;
+    this._gapPicks = [];
+    if (this.gapLayer) this.gapLayer.setGeometries([]);
+    if (this.gapPrev) this.gapPrev.setGeometries([]);
+    if (this.gapLabel) this.gapLabel.setGeometries([]);
+  },
 
   // 底图网样式（base_/net_ = 全路网，未走过的线路）。宽度固定，不随线路宽度滑块变化。
   netStyles() {
@@ -1869,8 +2137,8 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.7.1';
-const APP_DATE = '2026-10-10';
+const APP_VERSION = '0.8.0';
+const APP_DATE = '2026-10-12';
 
 /* ============================================================
    Store：行程存档（本机持久化 + 多档案 + 导出导入）
@@ -2021,6 +2289,12 @@ const App = {
   trips: [],   // 渲染结果，由 items 现算得出
 
   init() {
+    // 方案 B：先把管理员补丁合并进路网几何，再建图与渲染，
+    // 这样补丁既能画出来、也能参与走线最短路。必须早于 MapAdapter.init / Net.build。
+    try {
+      this._patchStats = Patches.merge();
+      Net.g = null;            // 若此前已建过图，清掉让补丁生效
+    } catch (e) { console.warn('[补丁合并失败]', e); }
     try {
       MapAdapter.init();
     } catch (e) {
@@ -2064,6 +2338,8 @@ const App = {
       '普速 <b style="color:#185FA5;">' + cvMain.length + '</b> 条（OSM 自动筛选）&nbsp;|&nbsp; ' +
       '车站库 <b style="color:#185FA5;">' + stN.toLocaleString() + '</b> 站';
     this.refresh();
+    // 管理员模式（?admin=1）：补线工具，务必放在最后（此时地图与面板都已就绪）
+    this.initAdmin();
   },
 
   // ---- 手动录入车站 ----
@@ -2616,6 +2892,125 @@ const App = {
   clearKey() {
     localStorage.removeItem('TMAP_KEY');
     location.href = location.pathname;
+  },
+
+  /* ================= 管理员补线（?admin=1） ================= */
+
+  // 是否管理模式：URL 带 ?admin=1
+  isAdmin() {
+    try { return new URLSearchParams(location.search).get('admin') === '1'; }
+    catch (e) { return false; }
+  },
+
+  initAdmin() {
+    if (!this.isAdmin()) return;
+    const box = document.getElementById('adminBox');
+    if (box) box.style.display = 'block';
+    // 地图点击拾取
+    try {
+      if (MapAdapter.map && MapAdapter.map.on) {
+        MapAdapter.map.on('click', e => {
+          const p = e && e.latLng;
+          if (!p || !MapAdapter._gap) return;
+          const n = MapAdapter.addGapPick(p.lat, p.lng);
+          this._renderAdminPanel();
+          this.toast('已加途经点 ' + n + ' 个');
+        });
+      }
+    } catch (e) {}
+    this.renderGapList();
+    this._renderAdminPanel();
+  },
+
+  renderGapList() {
+    const box = document.getElementById('gapList');
+    const nEl = document.getElementById('gapN');
+    const pEl = document.getElementById('patchN');
+    const G = window.RW_GAPS || { gaps: [] };
+    const patches = Patches.all();
+    if (pEl) pEl.textContent = patches.length;
+    if (nEl) nEl.textContent = G.gaps ? G.gaps.length : 0;
+    if (!box) return;
+    const gaps = G.gaps || [];
+    if (!gaps.length) { box.innerHTML = '<div class="adm-note">没有待补缺口，路网数据完整。</div>'; return; }
+    box.innerHTML = gaps.map((g, i) =>
+      '<div class="gap-item">' +
+        '<span class="g-net ' + (g.kind === 'highspeed' ? 'hs' : 'cv') + '">' + (g.net === '高铁' ? '高铁' : '普速') + '</span>' +
+        '<span class="g-name" title="' + g.line + '">' + g.line + '</span>' +
+        '<span class="g-km">' + g.gapKm + 'km</span>' +
+        '<button class="btn" style="margin:0;padding:3px 8px;font-size:11px;" onclick="App.pickGap(' + i + ')">修补</button>' +
+      '</div>'
+    ).join('');
+  },
+
+  // 选中一个缺口，进入拾取状态
+  pickGap(i) {
+    const G = window.RW_GAPS || { gaps: [] };
+    const g = (G.gaps || [])[i];
+    if (!g) return;
+    MapAdapter.showGap(g);
+    this._gapIndex = i;
+    this._renderAdminPanel();
+    this.toast('已定位「' + g.line + '」缺口（' + g.gapKm + 'km），可在地图上点选途经点');
+  },
+
+  _renderAdminPanel() {
+    const box = document.getElementById('adminPanel');
+    if (!box) return;
+    const g = (window.RW_GAPS || { gaps: [] }).gaps || [];
+    const cur = g[this._gapIndex];
+    if (!cur || !MapAdapter._gap) {
+      box.innerHTML = '<div class="adm-note">点击上方任一缺口的「修补」按钮开始。' +
+        '端点已由诊断工具算好，一般只需确认；只有当这段铁路并非直线时，才在地图上补点。</div>';
+      return;
+    }
+    const picks = MapAdapter._gapPicks || [];
+    const path = MapAdapter.gapPath() || [];
+    let km = 0;
+    for (let i = 0; i < path.length - 1; i++) km += Core.haversine(path[i], path[i + 1]);
+    const id = 'patch-' + (cur.line || 'gap').replace(/[^\w\u4e00-\u9fff]+/g, '-') + '-' + Math.round(cur.gapKm);
+    const patch = {
+      id: id, type: 'connect', line: cur.line,
+      a: cur.a, b: cur.b,
+      via: picks.length ? picks : undefined,
+      kind: cur.kind || 'conventional', enabled: true
+    };
+    const txt = JSON.stringify(patch, null, 2).replace(/\n\s+/g, ' ');
+    box.innerHTML =
+      '<div class="adm-pick"><b>' + cur.line + '</b>　缺口 ' + cur.gapKm + 'km' +
+        '<div class="adm-note" style="margin:4px 0 0;">补出路径约 <b>' + Math.round(km) + ' km</b>　途经点 ' + picks.length + ' 个</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;margin:6px 0;">' +
+        '<button class="btn" style="flex:1;margin:0;font-size:11px;padding:5px 0;" onclick="App.undoGap()">撤销上一点</button>' +
+        '<button class="btn btn-primary" style="flex:1;margin:0;font-size:11px;padding:5px 0;" onclick="App.savePatchLocal()">存为本地补丁</button>' +
+      '</div>' +
+      '<div class="adm-note">维护者做法：点「存为本地补丁」后，在控制台执行 <code>copy(App.lastPatchJson)</code> 复制，' +
+      '粘贴进 <code>patches.js</code> 提交仓库；普通用户用本地补丁只对自己生效。</div>' +
+      '<textarea class="adm-json" id="patchJson" readonly>' + txt + '</textarea>';
+  },
+
+  undoGap() {
+    MapAdapter.undoGapPick();
+    this._renderAdminPanel();
+  },
+
+  savePatchLocal() {
+    const g = (window.RW_GAPS || { gaps: [] }).gaps || [];
+    const cur = g[this._gapIndex];
+    if (!cur) return;
+    const picks = MapAdapter._gapPicks || [];
+    const patch = {
+      id: 'patch-' + (cur.line || 'gap').replace(/[^\w\u4e00-\u9fff]+/g, '-') + '-' + Math.round(cur.gapKm),
+      type: 'connect', line: cur.line, a: cur.a, b: cur.b,
+      via: picks.length ? picks : undefined,
+      kind: cur.kind || 'conventional', enabled: true
+    };
+    this.lastPatchJson = JSON.stringify(patch, null, 2);
+    const r = Patches.addLocal(patch);
+    if (r.error) return this.toast(r.error);
+    this.toast('已存为本地补丁（刷新后生效）');
+    this.renderGapList();
+    this._renderAdminPanel();
   },
 
   togglePanel() {

@@ -30,6 +30,9 @@ THRESH = 8.0      # km，两段最近端点超过此值才算断
 MINSIG = 15.0     # km，段长下限，低于此视为引轨残片
 CORRIDOR = 0.86   # 走向一致性余弦阈值（>0.86 视为同一走廊，cos 60°=0.5）
 SLIVER = 2.0      # km，判定缺口时忽略的「碎屑段」长度；与它配对不构成真缺口
+# 索引.html 的 Net.bridgeComponents 会自动搭桥 <=BRIDGE_KM 的跨分量缺口，
+# 补这些等于白补，所以生成待补清单时过滤掉。
+BRIDGE_KM = 6.0
 
 
 def load(fn, var):
@@ -165,6 +168,35 @@ def main():
     else:
         tot = sum(out[k]["buckets"]["real"] for k in out)
         print(">>> 全网真缺口合计：%d 条（这些才是管理员真正要动手的）" % tot)
+
+    # 生成 gaps.js（供 ?admin=1 管理界面读取）。无论是否 --json 都写。
+    gaps = []
+    allreal = 0
+    for label in ("高铁", "普速"):
+        for r in out[label]["real"]:
+            allreal += 1
+            if r["gapKm"] <= BRIDGE_KM:
+                continue                      # 自动搭桥能覆盖，补了也没用
+            gaps.append({
+                "line": r["line"], "net": label, "gapKm": r["gapKm"], "cos": r["cos"],
+                "a": r["a"], "b": r["b"],
+                "kind": "highspeed" if label == "高铁" else "conventional",
+            })
+    gaps.sort(key=lambda x: -x["gapKm"])
+    payload = {
+        "bridgeKm": BRIDGE_KM,
+        "note": "真缺口清单，已过滤 <=bridgeKm 的自动搭桥项。由 tools/diagnose_gaps.py 生成，勿手改。",
+        "count": len(gaps),
+        "gaps": gaps,
+    }
+    with open(os.path.join(ROOT, "gaps.js"), "w", encoding="utf-8") as f:
+        f.write("/* 真缺口清单（由 tools/diagnose_gaps.py 生成，勿手改）\n"
+                "   ?admin=1 管理界面读取此文件，把待补缺口列出来供管理员拾取修补。\n"
+                "   已过滤 <= %dkm 的缺口——那些 Net.bridgeComponents 会自动搭桥。 */\n" % BRIDGE_KM)
+        f.write("window.RW_GAPS=" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + ";\n")
+    if not as_json:
+        print("输出 gaps.js：待补缺口 %d 条（另有 %d 条 <=%dkm 已被自动搭桥覆盖，无需补）"
+              % (len(gaps), allreal - len(gaps), BRIDGE_KM))
 
 
 if __name__ == "__main__":
