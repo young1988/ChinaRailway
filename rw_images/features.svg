@@ -1,0 +1,38 @@
+<svg viewBox="0 0 680 380" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>铁路足迹 功能清单</title>
+  <desc>App 界面示意与七大核心功能标注</desc>
+  <rect x="0" y="0" width="680" height="380" fill="#0C1322"/>
+  <text x="70" y="56" font-family="sans-serif" font-size="15" font-weight="500" fill="#FFFFFF">界面示意</text>
+  <rect x="70" y="70" width="180" height="300" rx="20" fill="#0F1B33" stroke="#2A3A5A" stroke-width="1"/>
+  <rect x="80" y="82" width="160" height="276" rx="12" fill="#0A1426"/>
+  <g stroke="#15243F" stroke-width="1">
+    <line x1="80" y1="140" x2="240" y2="140"/>
+    <line x1="80" y1="200" x2="240" y2="200"/>
+    <line x1="80" y1="260" x2="240" y2="260"/>
+    <line x1="130" y1="82" x2="130" y2="358"/>
+    <line x1="190" y1="82" x2="190" y2="358"/>
+  </g>
+  <polyline points="95,300 130,250 170,280 210,230" fill="none" stroke="#3E5C86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+  <path d="M110,210 Q150,120 200,150" fill="none" stroke="#FF9D4D" stroke-width="2.5" stroke-linecap="round"/>
+  <g fill="#4FA3FF">
+    <circle cx="110" cy="210" r="5"/><circle cx="200" cy="150" r="5"/>
+    <circle cx="150" cy="165" r="3"/>
+  </g>
+  <circle cx="200" cy="150" r="9" fill="none" stroke="#4FA3FF" stroke-width="1.5" opacity="0.5"/>
+  <g>
+    <rect x="116" y="216" width="34" height="15" rx="3" fill="#0A1426" stroke="#2A3A5A"/>
+    <text x="133" y="227" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#9FB0C8">北京</text>
+    <rect x="176" y="126" width="34" height="15" rx="3" fill="#0A1426" stroke="#2A3A5A"/>
+    <text x="193" y="137" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#9FB0C8">上海</text>
+  </g>
+  <text x="290" y="56" font-family="sans-serif" font-size="15" font-weight="500" fill="#FFFFFF">核心功能</text>
+  <g font-family="sans-serif" font-size="14" fill="#E6EDF5">
+    <g><rect x="290" y="72" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="80" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="94">车站高亮（蓝点 + 黑底灰字站名）</text></g>
+    <g><rect x="290" y="112" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="120" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="134">贝塞尔曲线行程动画</text></g>
+    <g><rect x="290" y="152" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="160" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="174">迷雾地图（压暗未走线路）</text></g>
+    <g><rect x="290" y="192" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="200" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="214">多底图切换（正常 / 纯黑 / 卫星）</text></g>
+    <g><rect x="290" y="232" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="240" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="254">铁路专注模式（弱化公路/POI）</text></g>
+    <g><rect x="290" y="272" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="280" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="294">起点终点脉冲高亮</text></g>
+    <g><rect x="290" y="312" width="350" height="34" rx="8" fill="#16223C" stroke="#2C3E60" stroke-width="0.5"/><rect x="302" y="320" width="18" height="18" rx="4" fill="#FF9D4D"/><text x="332" y="334">动效开关（默认开启）</text></g>
+  </g>
+</svg>

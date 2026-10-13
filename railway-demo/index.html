@@ -61,13 +61,24 @@
   .trip .del { font-size: 12px; color: #c0c0c0; padding: 0 2px; }
   .trip .del:hover { color: #e24b4a; }
   .empty { font-size: 12px; color: #aaa; padding: 10px 0; }
+  /* 图例：固定在地图右上角，避开右下角的「图层」「线路」悬浮按钮 */
   .legend {
-    position: absolute; right: 16px; bottom: 24px; background: #fff;
-    border-radius: 10px; padding: 10px 14px; font-size: 12px; color: #555;
-    box-shadow: 0 2px 12px rgba(0,0,0,.10); z-index: 9999; line-height: 1.9;
-    pointer-events: none;
+    position: absolute; right: 16px; top: 16px; background: #fff;
+    border-radius: 10px; padding: 8px 12px; font-size: 11.5px; color: #555;
+    box-shadow: 0 2px 12px rgba(0,0,0,.10); z-index: 15; line-height: 1.7;
+    pointer-events: none; transition: opacity .15s;
   }
   .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  /* 窄屏（左侧面板 + 右上角图例放不下时）：图例改叠在右下角按钮上方；
+     弹卡也从这一侧展开，故打开弹卡时先把图例淡出，避免叠在一起 */
+  @media (max-width: 620px) {
+    .legend { top: auto; bottom: 124px; right: 12px; padding: 6px 9px; font-size: 11px; line-height: 1.6; }
+    body.pop-open .legend { opacity: 0; }
+  }
+  /* 极窄屏（面板几乎占满宽度）：面板展开时先藏起图例，收起面板后图例自动回来 */
+  @media (max-width: 460px) {
+    body:not(.panel-collapsed) .legend { display: none; }
+  }
   .toast {
     position: absolute; left: 50%; top: 24px; transform: translateX(-50%);
     background: #222; color: #fff; font-size: 13px; padding: 9px 16px;
@@ -157,6 +168,141 @@
   .gap-item .g-net { font-size:10px; padding:1px 4px; border-radius:4px; white-space:nowrap; }
   .gap-item .g-net.hs { background:#e6f1fb; color:#185fa5; }
   .gap-item .g-net.cv { background:#f1efe8; color:#5f5e5a; }
+
+  /* ===== 地图右下角悬浮控件（仿百度地图图层切换） ===== */
+  .map-fab {
+    position: absolute; z-index: 20; right: 16px; bottom: 16px;
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+  }
+  .map-fab .fab-btn {
+    width: 44px; height: 44px; border-radius: 11px; cursor: pointer;
+    background: #fff; border: 1px solid #e6e6e6; box-shadow: 0 2px 10px rgba(0,0,0,.18);
+    display: flex; align-items: center; justify-content: center; color: #444; font-size: 12px;
+    user-select: none; transition: transform .12s, box-shadow .12s, color .12s;
+  }
+  .map-fab .fab-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.24); color:#2f6fed; }
+  .map-fab .fab-btn.active { background: #2f6fed; color:#fff; border-color:#2f6fed; }
+  .map-fab .fab-btn svg { width: 22px; height: 22px; }
+
+  .map-pop {
+    position: absolute; z-index: 21; right: 70px; bottom: 16px; width: 236px;
+    background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+    box-shadow: 0 6px 28px rgba(0,0,0,.22); padding: 12px; display: none;
+    box-sizing: border-box;
+  }
+  .map-pop.open { display: block; animation: popIn .14s ease-out; }
+  @keyframes popIn { from { opacity:0; transform: translateY(6px) scale(.98);} to {opacity:1; transform:none;} }
+  .map-pop h4 { margin: 0 0 8px; font-size: 13px; color:#333; font-weight:600; }
+  .map-pop .row { margin-bottom: 10px; }
+  .map-pop .row:last-child { margin-bottom: 0; }
+  .map-pop .lbl { font-size: 11px; color:#999; margin-bottom:4px; display:block; }
+
+  /* 线路图鉴弹层（更大、可滚动） */
+  /* 上限同时考虑视口高度与右上角图例：矮窗口里弹卡不会顶到图例 */
+  #linePop { width: 300px; max-height: min(74vh, calc(100vh - 190px)); display:none; flex-direction:column; }
+  #linePop.open { display:flex; }
+  #linePop .lp-head { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  /* 顶部里程统计条：高铁 / 普速 / 窄轨 分开 + 总计 */
+  #linePop .lp-stats {
+    display:flex; flex-wrap:wrap; align-items:center; gap:3px 10px;
+    margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #f0f0f0;
+    font-size:10.5px; color:#999;
+  }
+  #linePop .lp-stats .st { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+  #linePop .lp-stats .st b { font-weight:600; color:#333; font-variant-numeric:tabular-nums; }
+  #linePop .lp-stats .st.total { margin-left:auto; color:#666; }
+  #linePop .lp-stats .st.total b { color:#2f6fed; }
+  #linePop .lp-stats .dot { width:6px; height:6px; border-radius:2px; display:inline-block; flex:none; }
+  #linePop .lp-stats .dot.hs { background:#185fa5; }
+  #linePop .lp-stats .dot.cv { background:#8a8a86; }
+  #linePop .lp-stats .dot.nw { background:#b08d4f; }
+  #linePop .lp-search { flex:1; padding:6px 8px; border:1px solid #e3e3e3; border-radius:7px; font-size:12px; outline:none; min-width:0; }
+  #linePop .lp-search:focus { border-color:#2f6fed; }
+  #linePop .lp-count { font-size:11px; color:#999; white-space:nowrap; }
+  /* 分类 / 分组 chip 行 */
+  #linePop .lp-chips { display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:6px; }
+  #linePop .chip {
+    font-size:11px; padding:2px 8px; border-radius:20px; border:1px solid #e3e3e3;
+    color:#666; background:#fafafa; cursor:pointer; user-select:none; line-height:1.7;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  #linePop .chip:hover { border-color:#b9cdf9; color:#2f6fed; }
+  #linePop .chip.on { background:#2f6fed; border-color:#2f6fed; color:#fff; }
+  #linePop .chip.on:hover { color:#fff; }
+  #linePop .chip-sp { flex:1; }
+  #linePop .lp-groups { overflow-y:auto; flex:1; padding-right:2px; min-height:90px; }
+  .lp-group {
+    font-size:11px; color:#999; margin:0 0 2px; padding:6px 0 4px; font-weight:600; letter-spacing:.5px;
+    position:sticky; top:-1px; background:#fff;   /* 吸顶分组标题必须不透明，否则滚动时下层文字透出 */
+  }
+  .lp-group:first-child { padding-top:0; }
+  .lp-item { padding:5px 8px; border-radius:6px; font-size:12px; color:#333; cursor:pointer; display:flex; align-items:center; gap:7px; }
+  .lp-item:hover { background:#eef3ff; color:#2f6fed; }
+  .lp-item.on { background:#2f6fed; color:#fff; }
+  .lp-item .lp-box {
+    width:12px; height:12px; flex:none; border-radius:3px; border:1.5px solid #ccd2dc;
+    box-sizing:border-box; position:relative; background:#fff;
+  }
+  .lp-item.on .lp-box { border-color:#fff; }
+  .lp-item.on .lp-box::after {
+    content:'✓'; position:absolute; left:1px; top:-4px; font-size:11px; line-height:1; color:#2f6fed;
+  }
+  .lp-item .lp-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lp-item.walked .lp-name { font-weight:600; }
+  .lp-item .lp-dot { width:5px; height:5px; border-radius:50%; background:#f5a623; flex:none; display:none; }
+  .lp-item.walked .lp-dot { display:inline-block; }
+  .lp-item .tag { font-size:10px; padding:1px 5px; border-radius:4px; white-space:nowrap; flex:none; }
+  .lp-item .tag.hs { background:#e6f1fb; color:#185fa5; }
+  .lp-item .tag.cv { background:#f1efe8; color:#5f5e5a; }
+  .lp-item .tag.nw { background:#f3ece2; color:#8a6d3b; }
+  .lp-item.on .tag { background:rgba(255,255,255,.25); color:#fff; }
+  /* 底部：选中计数 + 全选 / 全部取消 */
+  #linePop .lp-foot { display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid #f0f0f0; }
+  #linePop .lp-sel { font-size:11px; color:#999; flex:1; }
+  #linePop .lp-btn {
+    font-size:11.5px; color:#2f6fed; cursor:pointer; padding:4px 10px;
+    border:1px solid #cfe0ff; border-radius:7px; background:#fff; white-space:nowrap;
+  }
+  #linePop .lp-btn:hover { background:#eef3ff; }
+  #linePop .lp-btn.dis { color:#bbb; border-color:#eee; cursor:default; }
+  #linePop .lp-btn.dis:hover { background:#fff; }
+  #linePop .lp-empty { font-size:12px; color:#aaa; text-align:center; padding:18px 0; }
+  /* 窄屏：右下角弹卡改为贴在按钮上方、宽度自适应，避免 300px 固定宽超出视口
+     （须写在 .map-pop / #linePop 之后，否则被同权重的固定宽覆盖） */
+  @media (max-width: 520px) {
+    .map-pop { left: auto; right: 12px; width: calc(100vw - 24px); max-width: 340px; bottom: 116px; }
+    #linePop { width: calc(100vw - 24px); max-height: min(56vh, calc(100vh - 150px)); }
+  }
+
+  body.dark .map-fab .fab-btn { background:#2a2e36; border-color:#3a4049; color:#dfe3e8; box-shadow:0 2px 10px rgba(0,0,0,.45); }
+  body.dark .map-fab .fab-btn:hover { color:#8fb2ff; }
+  body.dark .map-fab .fab-btn.active { background:#3b6fd4; color:#fff; }
+  body.dark .map-pop { background:#23262d; border-color:#3a4049; box-shadow:0 6px 28px rgba(0,0,0,.55); }
+  body.dark .map-pop h4 { color:#e8eaed; }
+  body.dark .map-pop .lbl { color:#8b9096; }
+  body.dark #linePop .lp-search { background:#2c3038; border-color:#3a4049; color:#e8eaed; }
+  body.dark #linePop .lp-count { color:#8b9096; }
+  body.dark #linePop .chip { background:#282c33; border-color:#3a4049; color:#b8bec6; }
+  body.dark #linePop .chip:hover { border-color:#4a5b7d; color:#8fb2ff; }
+  body.dark #linePop .chip.on { background:#3b6fd4; border-color:#3b6fd4; color:#fff; }
+  body.dark .lp-group { color:#8b9096; background:#23262d; }
+  body.dark .lp-item { color:#dfe3e8; }
+  body.dark .lp-item:hover { background:#2c3445; color:#8fb2ff; }
+  body.dark .lp-item .lp-box { background:#23262d; border-color:#4a5058; }
+  body.dark .lp-item.on .lp-box { background:#fff; border-color:#fff; }
+  body.dark .lp-item .tag.hs { background:#1d2a3d; color:#7ab4f0; }
+  body.dark .lp-item .tag.cv { background:#2c291e; color:#d8b26a; }
+  body.dark .lp-item .tag.nw { background:#33291b; color:#c9a86a; }
+  body.dark #linePop .lp-foot { border-top-color:#33373e; }
+  body.dark #linePop .lp-sel { color:#8b9096; }
+  body.dark #linePop .lp-stats { border-bottom-color:#33373e; color:#8b9096; }
+  body.dark #linePop .lp-stats .st b { color:#dfe3e8; }
+  body.dark #linePop .lp-stats .st.total b { color:#8fb2ff; }
+  body.dark #linePop .lp-btn { background:#282c33; border-color:#3a4a66; color:#8fb2ff; }
+  body.dark #linePop .lp-btn:hover { background:#2c3445; }
+  body.dark #linePop .lp-btn.dis { color:#6a7077; border-color:#33373e; }
+  body.dark #linePop .lp-btn.dis:hover { background:#282c33; }
+  body.dark #linePop .lp-empty { color:#767b82; }
   body.dark .gap-item { border-bottom-color:#2f333a; color:#c4c9d0; }
   body.dark .gap-item .g-net.hs { background:#1b3a5c; color:#8fb2ff; }
   body.dark .gap-item .g-net.cv { background:#2a2d33; color:#9aa0a8; }
@@ -208,9 +354,68 @@
 <script src="aliases.js"></script>
 <script src="patches.js"></script>
 <script src="gaps.js"></script>
+<script src="line_py.js"></script>
+<script src="line_alias.js"></script>
 </head>
 <body>
 <div id="map"></div>
+
+<!-- 地图右下角悬浮控件（仿百度地图图层切换） -->
+<div class="map-fab">
+  <!-- 线路图鉴 -->
+  <div class="fab-btn" id="lineFab" title="线路图鉴" onclick="App.toggleLineList()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="19" cy="12" r="2.4"/><circle cx="14.5" cy="18" r="2.4"/></svg>
+  </div>
+  <!-- 图层切换 -->
+  <div class="fab-btn active" id="layerFab" title="图层" onclick="App.toggleLayerPop()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/><path d="M3 18l9 5 9-5" opacity=".5"/></svg>
+  </div>
+</div>
+
+<!-- 图层弹出卡片：底图 / 迷雾 / 专注 / 反色 -->
+<div class="map-pop" id="layerPop">
+  <h4>地图样式</h4>
+  <div class="row">
+    <span class="lbl">底图</span>
+    <div class="seg" id="baseSeg" style="margin-top:0;">
+      <button class="seg-b" data-base="normal" onclick="App.setBase('normal')">正常</button>
+      <button class="seg-b" data-base="black" onclick="App.setBase('black')">纯黑</button>
+      <button class="seg-b" data-base="satellite" onclick="App.setBase('satellite')">卫星</button>
+    </div>
+  </div>
+  <div class="row">
+    <label class="net-chk" style="margin:0;"><input type="checkbox" id="chkFog" onchange="App.setFog(this.checked)"><i></i>迷雾地图（未走线路变暗）</label>
+  </div>
+  <div class="row">
+    <label class="net-chk" style="margin:0;"><input type="checkbox" id="chkFocus" onchange="App.setFocus(this.checked)"><i></i>铁路专注（弱化公路/标注）</label>
+  </div>
+  <div class="row" id="invertRow" style="display:none;">
+    <label class="net-chk" style="margin:0;"><input type="checkbox" id="chkInvert" onchange="App.toggleInvert(this.checked)"><i></i>强制反色<span>（底图没变暗时勾它）</span></label>
+  </div>
+</div>
+
+<!-- 线路图鉴弹出面板 -->
+<div class="map-pop" id="linePop">
+  <div class="lp-stats" id="lineStats"></div>
+  <div class="lp-head">
+    <input class="lp-search" id="lineSearch" placeholder="搜线路名或首字母，如 京九 / jj" oninput="App.filterLines(this.value)">
+    <span class="lp-count" id="lineCount"></span>
+  </div>
+  <div class="lp-chips">
+    <span class="chip on" data-cat="all" onclick="App.setLineCat('all')">全部</span>
+    <span class="chip" data-cat="hs" onclick="App.setLineCat('hs')">高铁</span>
+    <span class="chip" data-cat="cv" onclick="App.setLineCat('cv')">普速</span>
+    <span class="chip-sp"></span>
+    <span class="chip" data-grp="type" onclick="App.setLineGroup('type')">按类型</span>
+    <span class="chip on" data-grp="letter" onclick="App.setLineGroup('letter')">按字母</span>
+  </div>
+  <div class="lp-groups" id="lineGroups"></div>
+  <div class="lp-foot">
+    <span class="lp-sel" id="lineSelInfo">未选中</span>
+    <span class="lp-btn" id="lineSelAll" onclick="App.selectAllLines()">全选</span>
+    <span class="lp-btn" id="lineSelNone" onclick="App.clearLineSel()">全部取消</span>
+  </div>
+</div>
 
 <div class="panel">
   <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -282,15 +487,8 @@
   </div>
 
   <div class="sec-title">底图与显示</div>
-  <div class="seg" id="baseSeg" style="margin-bottom:8px;">
-    <button class="seg-b" data-base="normal" onclick="App.setBase('normal')">正常</button>
-    <button class="seg-b" data-base="black" onclick="App.setBase('black')">纯黑</button>
-    <button class="seg-b" data-base="satellite" onclick="App.setBase('satellite')">卫星</button>
-  </div>
+  <p class="sub" style="margin:0 0 8px;">底图样式、迷雾 / 专注开关已移到<span style="color:#2f6fed;">地图右下角「图层」</span>按钮 ▸</p>
   <div>
-    <label class="net-chk"><input type="checkbox" id="chkFog" onchange="App.setFog(this.checked)"><i></i>迷雾地图（未走线路变暗）</label>
-    <label class="net-chk"><input type="checkbox" id="chkFocus" onchange="App.setFocus(this.checked)"><i></i>铁路专注（弱化公路/标注）</label>
-    <label class="net-chk" id="invertRow" style="display:none;"><input type="checkbox" id="chkInvert" onchange="App.toggleInvert(this.checked)"><i></i>强制反色<span>（底图没变暗时勾它）</span></label>
     <label class="net-chk"><input type="checkbox" id="chkLabels" onchange="App.setLabels(this.checked)"><i></i>显示站名（在站点圆点上标注名称）</label>
     <label class="net-chk"><input type="checkbox" id="chkAnim" checked onchange="App.setAnim(this.checked)"><i></i>点亮动效（保存后沿贝塞尔曲线生长）</label>
   </div>
@@ -1479,6 +1677,7 @@ const MapAdapter = {
   map: null, baseLayer: null, glowLayer: null, litLayer: null, stationLayer: null,
   // 高铁路网 / 普速路网拆成独立图层，才能单独控制显隐
   hsLayer: null, convLayer: null,
+  lineHlGlowLayer: null, lineHlLayer: null, _hlName: null, _hlNames: [],
   netVisible: { hs: true, conv: true },
 
   init() {
@@ -1579,6 +1778,9 @@ const MapAdapter = {
       styles: this.litStyles(),
       geometries: []
     });
+    // 线路图鉴高亮图层：独立于路网与已走线，置于最上层
+    this.lineHlGlowLayer = new TMap.MultiPolyline({ map: this.map, styles: this.lineHlGlowStyle(), geometries: [] });
+    this.lineHlLayer = new TMap.MultiPolyline({ map: this.map, styles: this.lineHlStyles(), geometries: [] });
 
     const dotLit = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='7' cy='7' r='5' fill='%23f5a623' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E";
     const dotDim = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='%23b9bec6' stroke='%23ffffff' stroke-width='1.5'/%3E%3C/svg%3E";
@@ -1823,6 +2025,11 @@ const MapAdapter = {
       geometries: (this._lastGlow || [])
     });
     this.litLayer = new TMap.MultiPolyline({ map: this.map, styles: this.litStyles(), geometries: (this._lastLit || []) });
+    // 线路图鉴高亮图层：独立于路网与已走线，置于最上层
+    this.lineHlGlowLayer = new TMap.MultiPolyline({ map: this.map, styles: this.lineHlGlowStyle(), geometries: [] });
+    this.lineHlLayer = new TMap.MultiPolyline({ map: this.map, styles: this.lineHlStyles(), geometries: [] });
+    // 重建后恢复线路高亮（不重置视野，避免切底图时跳镜头）
+    if (this._hlNames && this._hlNames.length) this._applyLines(this._hlNames, false);
     this.setNetVisible('hs', this.netVisible.hs);
     this.setNetVisible('conv', this.netVisible.conv);
     if (this._lastTrips) this.render(this._lastTrips);
@@ -2132,13 +2339,82 @@ const MapAdapter = {
   resetView() {
     this.map.setCenter(new TMap.LatLng(34.5, 108.0));
     this.map.setZoom(4.6);
+  },
+
+  // ===== 线路图鉴：按线路名高亮整条线（独立于路网与已走线，置于最上层） =====
+  // 同名线路可能两个库都有（高铁段 + 普速段，如益湛线/京哈线/兰渝线），
+  // 这里把两边的 polylines 合并，高亮才是完整的一条线；kind 取里程大的一侧。
+  findLine(name) {
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    const a = hs[name], b = cv[name];
+    if (!a && !b) return null;
+    if (!b) return { kind: a.kind, rec: a };
+    if (!a) return { kind: b.kind, rec: b };
+    const main = (b.totalKm || 0) >= (a.totalKm || 0) ? b : a;
+    return {
+      kind: main.kind,
+      rec: { polylines: (a.polylines || []).concat(b.polylines || []) },
+      dual: true
+    };
+  },
+  lineHlStyles() {
+    return { hl: new TMap.PolylineStyle({ color: '#FF2E9A', width: 4, borderWidth: 0, lineCap: 'round' }) };
+  },
+  lineHlGlowStyle() {
+    return { hlGlow: new TMap.PolylineStyle({ color: 'rgba(255,46,154,0.30)', width: 11, borderWidth: 0, lineCap: 'round' }) };
+  },
+  highlightLine(name, fit) { this.highlightLines(name ? [name] : [], fit); },
+  // 支持多选：list 为线路名数组，几何量过大时自动省掉光晕层以降开销
+  highlightLines(list, fit) {
+    if (!this.ready()) return;
+    const names = (list || []).filter(Boolean);
+    this._hlNames = names;
+    this._hlName = names.length === 1 ? names[0] : null;
+    this._applyLines(names, fit);
+  },
+  _applyLines(names, fit) {
+    if (this.lineHlLayer) this.lineHlLayer.setGeometries([]);
+    if (this.lineHlGlowLayer) this.lineHlGlowLayer.setGeometries([]);
+    if (!names.length) return;
+    const geoms = []; let i = 0;
+    let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+    names.forEach(name => {
+      const f = this.findLine(name);
+      if (!f || !f.rec.polylines) return;
+      f.rec.polylines.forEach(pl => {
+        const paths = pl.map(p => new TMap.LatLng(p[0], p[1]));
+        geoms.push({ id: 'hl_' + (i++), styleId: 'hl', paths });
+        pl.forEach(p => {
+          if (p[0] < minLat) minLat = p[0]; if (p[0] > maxLat) maxLat = p[0];
+          if (p[1] < minLng) minLng = p[1]; if (p[1] > maxLng) maxLng = p[1];
+        });
+      });
+    });
+    if (!geoms.length) return;
+    // 命中过多线段时（例如全选）不再叠加光晕，避免绘制压力
+    const glow = geoms.length <= 80 ? geoms.map(g => ({ ...g, styleId: 'hlGlow' })) : [];
+    if (this.lineHlGlowLayer) this.lineHlGlowLayer.setGeometries(glow);
+    if (this.lineHlLayer) this.lineHlLayer.setGeometries(geoms);
+    if (fit !== false) {
+      try {
+        const b = new TMap.LatLngBounds(new TMap.LatLng(minLat, minLng), new TMap.LatLng(maxLat, maxLng));
+        this.map.fitBounds(b, { padding: { top: 80, bottom: 80, left: 340, right: 80 } });
+      } catch (e) {}
+    }
+  },
+  clearLineHighlight() {
+    this._hlName = null;
+    this._hlNames = [];
+    if (this.lineHlLayer) this.lineHlLayer.setGeometries([]);
+    if (this.lineHlGlowLayer) this.lineHlGlowLayer.setGeometries([]);
   }
 };
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.8.0';
-const APP_DATE = '2026-10-12';
+const APP_VERSION = '0.12.0';
+const APP_DATE = '2026-10-13';
 
 /* ============================================================
    Store：行程存档（本机持久化 + 多档案 + 导出导入）
@@ -2340,6 +2616,13 @@ const App = {
     this.refresh();
     // 管理员模式（?admin=1）：补线工具，务必放在最后（此时地图与面板都已就绪）
     this.initAdmin();
+    // 点击地图空白处关闭右下角悬浮弹层（点 FAB / 弹层内部不关闭）
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.map-pop') || e.target.closest('.map-fab')) return;
+      const lp = document.getElementById('layerPop'); if (lp) lp.classList.remove('open');
+      const lq = document.getElementById('linePop'); if (lq) lq.classList.remove('open');
+      this.syncPopState();
+    });
   },
 
   // ---- 手动录入车站 ----
@@ -2532,6 +2815,258 @@ const App = {
     this.paintLegend();
   },
   syncThemeUI() { this.syncBaseUI(); },
+
+  // ===== 地图悬浮控件：右下角「图层」与「线路图鉴」 =====
+  toggleLayerPop() {
+    const p = document.getElementById('layerPop');
+    if (!p) return;
+    const open = p.classList.toggle('open');
+    if (open) { const lp = document.getElementById('linePop'); if (lp) lp.classList.remove('open'); }
+    this.syncBaseUI();   // 打开时刷新底图/迷雾/专注的勾选状态
+    this.autoCollapsePanel(open);
+    this.syncPopState();
+  },
+  toggleLineList() {
+    const p = document.getElementById('linePop');
+    if (!p) return;
+    const wasOpen = p.classList.contains('open');
+    if (!wasOpen && !this._lineBuilt) { this.buildLineList(); this._lineBuilt = true; }
+    if (!wasOpen) this.renderLineStats();   // 顶部里程条（数据不变，刷新一次即可）
+    p.classList.toggle('open', !wasOpen);
+    if (!wasOpen) { const lp = document.getElementById('layerPop'); if (lp) lp.classList.remove('open'); }
+    this.autoCollapsePanel(!wasOpen);
+    this.syncPopState();
+  },
+  // 小屏（≤520px）左侧面板会占掉大半宽度，打开弹卡时自动收起面板，两者不叠在一起
+  autoCollapsePanel(popOpen) {
+    if (!popOpen) return;
+    if (window.innerWidth > 520) return;
+    this.setPanel(false);
+  },
+  // 图层 / 线路弹卡是否打开 → 决定图例是否淡出（窄屏避免叠压）
+  syncPopState() {
+    const any = !!(document.querySelector('.map-pop.open'));
+    document.body.classList.toggle('pop-open', any);
+  },
+  // ===== 线路图鉴：分类筛选 + 字母分组 + 模糊/首字母搜索 + 多选高亮 =====
+  _lineInit() {
+    if (!this._selLines) this._selLines = new Set();
+    if (!this._lineGroup) this._lineGroup = 'letter';   // 'letter' 按字母 / 'type' 按高铁普速
+    if (!this._lineCat) this._lineCat = 'all';          // 'all' / 'hs' / 'cv'
+    if (typeof this._lineQ !== 'string') this._lineQ = '';
+  },
+  // 线路名 -> 拼音首字母串（京九线 -> JJX），查表 window.RW_LINE_PY（离线生成：tools/build_line_pinyin.py）
+  lineInitials(name) {
+    const P = window.RW_LINE_PY || {};
+    let s = '';
+    for (const c of name) s += (P[c] || (/[0-9a-zA-Z]/.test(c) ? c.toUpperCase() : ''));
+    return s;
+  },
+  lineGroupKey(name) { return this.lineInitials(name).charAt(0) || '#'; },
+  // 标准线路名 -> [别名...]（反向索引，RW_LINE_ALIAS 是 别名 -> [标准名]）
+  // 例：益湛线的别名是「洛湛铁路」——OSM 里它的 name 就叫益湛线，
+  // 洛湛只写在 wikipedia:zh:洛湛铁路 标签里，没有别名层就搜不到。
+  lineAliasIndex() {
+    if (this._aliasIdx) return this._aliasIdx;
+    const idx = new Map();
+    const raw = window.RW_LINE_ALIAS || {};
+    Object.keys(raw).forEach(a => (raw[a] || []).forEach(n => {
+      if (!idx.has(n)) idx.set(n, []);
+      if (idx.get(n).indexOf(a) < 0) idx.get(n).push(a);
+    }));
+    this._aliasIdx = idx;
+    return idx;
+  },
+  // 模糊搜索（子串，忽略大小写）或首字母搜索（如 jj -> 京九线）；
+  // 别名同样参与两种匹配（如「洛湛」「lz」都能命中益湛线/焦柳线/马玉线）
+  lineMatch(name, q) {
+    if (!q) return true;
+    const ql = q.toLowerCase();
+    if (name.toLowerCase().indexOf(ql) >= 0) return true;
+    const a = q.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
+    const aliases = this.lineAliasIndex().get(name) || [];
+    for (let i = 0; i < aliases.length; i++) {
+      const al = aliases[i];
+      if (al.toLowerCase().indexOf(ql) >= 0) return true;
+      if (a && this.lineInitials(al).indexOf(a) >= 0) return true;
+    }
+    return a ? this.lineInitials(name).indexOf(a) >= 0 : false;
+  },
+  // 合并两个库为一张线路表（按名去重，kind/里程取总量大的那一侧）。
+  // 必须先合并再筛选，否则「分类」和「去重」会用两套口径——同一条线在高铁库里
+  // kind=highspeed、在普速库里 kind=conventional 时，流式双源遍历会让它在两个
+  // 分类档里都算数。缓存一次，列表/全选/统计都读它。
+  allLines() {
+    if (this._allLines) return this._allLines;
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    const m = new Map();
+    const take = (src) => Object.keys(src).forEach(n => {
+      const rec = src[n] || {};
+      const raw = rec.kind || 'conventional';
+      const prev = m.get(n);
+      if (!prev || (rec.totalKm || 0) > (prev._km || 0)) {
+        m.set(n, {
+          name: n,
+          raw: raw,
+          kind: raw === 'highspeed' ? 'hs' : 'cv',   // narrow 等并入普速档
+          _km: rec.totalKm || 0
+        });
+      }
+    });
+    take(hs); take(cv);
+    this._allLines = [...m.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
+    return this._allLines;
+  },
+  // 当前筛选结果（分类 + 搜索），列表渲染与「全选」共用同一份口径
+  filteredLines() {
+    this._lineInit();
+    const cat = this._lineCat, q = (this._lineQ || '').trim();
+    return this.allLines().filter(it => {
+      if (cat !== 'all' && cat !== it.kind) return false;
+      return this.lineMatch(it.name, q);
+    });
+  },
+  // 浮层顶部里程统计：按 kind 汇总两个库的 totalKm。
+  // 口径说明：**各线路里程相加**，不做去重——并行复线（上下行）、客专与普速并行段
+  // 都是不同的物理轨道，理应分别计数；同一条线两库各有一段时也分别计
+  // （如京哈线：普速 1684 km + 高铁段 787 km）。
+  lineMileage() {
+    if (this._mileage) return this._mileage;
+    const hs = (window.HSLINES && window.HSLINES.lines) || {};
+    const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    const acc = { hs: 0, cv: 0, nw: 0 };
+    const add = (src) => Object.keys(src).forEach(n => {
+      const rec = src[n] || {};
+      const k = rec.kind === 'highspeed' ? 'hs' : (rec.kind === 'narrow' ? 'nw' : 'cv');
+      acc[k] += rec.totalKm || 0;
+    });
+    add(hs); add(cv);
+    this._mileage = { hs: acc.hs, cv: acc.cv, nw: acc.nw, total: acc.hs + acc.cv + acc.nw };
+    return this._mileage;
+  },
+  renderLineStats() {
+    const el = document.getElementById('lineStats');
+    if (!el) return;
+    const m = this.lineMileage();
+    const fmt = n => Math.round(n).toLocaleString('en-US');
+    el.innerHTML =
+      '<span class="st"><i class="dot hs"></i>高铁 <b>' + fmt(m.hs) + '</b> km</span>' +
+      '<span class="st"><i class="dot cv"></i>普速 <b>' + fmt(m.cv) + '</b> km</span>' +
+      '<span class="st"><i class="dot nw"></i>窄轨 <b>' + fmt(m.nw) + '</b> km</span>' +
+      '<span class="st total">总计 <b>' + fmt(m.total) + '</b> km</span>';
+    el.title = '各线路里程相加（并行复线/客专分别计算，未去重）';
+  },
+  buildLineList() {
+    this._lineInit();
+    const groups = document.getElementById('lineGroups');
+    if (!groups) return;
+    const list = this.filteredLines();
+    const walked = new Set();
+    (this.items || []).forEach(t => { const n = OSM_LINE[t.lineId]; if (n) walked.add(n); });
+    const sel = this._selLines;
+    groups.innerHTML = '';
+    const mk = it => {
+      const d = document.createElement('div');
+      d.className = 'lp-item' + (walked.has(it.name) ? ' walked' : '') + (sel.has(it.name) ? ' on' : '');
+      d.setAttribute('data-name', it.name);
+      d.innerHTML = '<span class="lp-box"></span><span class="lp-dot"></span>' +
+        '<span class="lp-name"></span><span class="tag ' + it.kind + '">' +
+        (it.raw === 'narrow' ? '窄轨' : (it.kind === 'hs' ? '高铁' : '普速')) + '</span>';
+      d.querySelector('.lp-name').textContent = it.name;   // 文本节点赋值，避免线路名里的特殊字符
+      const al = this.lineAliasIndex().get(it.name);
+      if (al && al.length) d.title = '又称：' + al.join('、');
+      d.onclick = () => App.toggleLine(it.name);
+      return d;
+    };
+    const head = (txt) => {
+      const g = document.createElement('div'); g.className = 'lp-group'; g.textContent = txt;
+      groups.appendChild(g);
+    };
+    if (this._lineGroup === 'letter') {
+      const buckets = new Map();
+      list.forEach(it => {
+        const k = this.lineGroupKey(it.name);
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(it);
+      });
+      [...buckets.keys()].sort((a, b) => (a === '#' ? 1 : b === '#' ? -1 : (a < b ? -1 : 1))).forEach(k => {
+        head(k + ' · ' + buckets.get(k).length + ' 条');
+        buckets.get(k).forEach(it => groups.appendChild(mk(it)));
+      });
+    } else {
+      [['hs', '高铁'], ['cv', '普速']].forEach(([kind, label]) => {
+        const arr = list.filter(it => it.kind === kind);
+        if (!arr.length) return;
+        head(label + ' · ' + arr.length + ' 条');
+        arr.forEach(it => groups.appendChild(mk(it)));
+      });
+    }
+    if (!list.length) {
+      const d = document.createElement('div');
+      d.className = 'lp-empty'; d.textContent = '没有匹配的线路';
+      groups.appendChild(d);
+    }
+    const cnt = document.getElementById('lineCount'); if (cnt) cnt.textContent = list.length + ' 条';
+    this.syncLinePopUI();
+  },
+  // 同步 chip 选中态、底部计数与按钮可用态
+  syncLinePopUI() {
+    this._lineInit();
+    document.querySelectorAll('#linePop .chip[data-cat]').forEach(el => {
+      el.classList.toggle('on', el.getAttribute('data-cat') === this._lineCat);
+    });
+    document.querySelectorAll('#linePop .chip[data-grp]').forEach(el => {
+      el.classList.toggle('on', el.getAttribute('data-grp') === this._lineGroup);
+    });
+    const n = this._selLines.size, total = this.filteredLines().length;
+    const info = document.getElementById('lineSelInfo');
+    if (info) info.textContent = n ? ('已选 ' + n + ' 条') : '未选中';
+    const bAll = document.getElementById('lineSelAll'), bNone = document.getElementById('lineSelNone');
+    if (bAll) bAll.classList.toggle('dis', total === 0 || n >= total);
+    if (bNone) bNone.classList.toggle('dis', n === 0);
+  },
+  setLineCat(cat) { this._lineInit(); this._lineCat = cat; this.buildLineList(); },
+  setLineGroup(g) { this._lineInit(); this._lineGroup = g; this.buildLineList(); },
+  filterLines(q) { this._lineInit(); this._lineQ = q; this.buildLineList(); },
+  // 点一行 = 多选开关（不再关闭弹卡，便于连续勾选）
+  toggleLine(name) {
+    this._lineInit();
+    const wasOn = this._selLines.has(name);
+    if (wasOn) this._selLines.delete(name); else this._selLines.add(name);
+    document.querySelectorAll('#lineGroups .lp-item').forEach(el => {
+      el.classList.toggle('on', this._selLines.has(el.getAttribute('data-name')));
+    });
+    this.applyLineHighlight(!wasOn);   // 新选中时定位视野，取消时不跳镜头
+    this.syncLinePopUI();
+    const n = this._selLines.size;
+    if (!wasOn) this.toast('已高亮：' + name + (n > 1 ? '（共 ' + n + ' 条）' : ''));
+    else if (n) this.toast('已取消：' + name + '（剩 ' + n + ' 条）');
+    else this.toast('已清除线路高亮');
+  },
+  // 全选：把当前筛选（分类+搜索）命中的线路全部高亮
+  selectAllLines() {
+    this._lineInit();
+    const list = this.filteredLines();
+    if (!list.length) return;
+    list.forEach(it => this._selLines.add(it.name));
+    this.buildLineList();
+    this.applyLineHighlight(true);
+    this.toast('已高亮 ' + this._selLines.size + ' 条线路');
+  },
+  // 全部取消：清空选择与高亮
+  clearLineSel() {
+    this._lineInit();
+    if (!this._selLines.size) return;
+    this._selLines.clear();
+    this.buildLineList();
+    this.applyLineHighlight(false);
+    this.toast('已清除线路高亮');
+  },
+  applyLineHighlight(fit) {
+    if (!MapAdapter.ready()) return;
+    MapAdapter.highlightLines([...this._selLines], fit);
+  },
 
   toggleTheme(on) {
     if (!MapAdapter.ready()) return;
@@ -3013,12 +3548,14 @@ const App = {
     this._renderAdminPanel();
   },
 
-  togglePanel() {
+  togglePanel() { this.setPanel(!(document.getElementById('panelBody').style.display === 'none')); },
+  // open=true 展开面板，false 收起；小屏打开右下角弹卡时会自动收起面板，避免互相遮挡
+  setPanel(open) {
     const body = document.getElementById('panelBody');
     const btn = document.getElementById('panelBtn');
-    const hidden = body.style.display === 'none';
-    body.style.display = hidden ? 'block' : 'none';
-    btn.textContent = hidden ? '收起' : '展开';
+    if (body) body.style.display = open ? 'block' : 'none';
+    if (btn) btn.textContent = open ? '收起' : '展开';
+    document.body.classList.toggle('panel-collapsed', !open);   // 极窄屏据此决定图例是否显示
   },
 
   toast(msg) {

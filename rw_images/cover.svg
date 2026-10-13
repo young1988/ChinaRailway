@@ -1,0 +1,45 @@
+<svg viewBox="0 0 680 382" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>铁路足迹 封面主视觉</title>
+  <desc>深色科技风封面：中国铁路网络，已走线路暖橙高亮，未走线路迷雾压暗</desc>
+  <rect x="0" y="0" width="680" height="382" fill="#0C1322"/>
+  <g stroke="#16223C" stroke-width="1">
+    <line x1="40" y1="130" x2="640" y2="130"/>
+    <line x1="40" y1="190" x2="640" y2="190"/>
+    <line x1="40" y1="250" x2="640" y2="250"/>
+    <line x1="40" y1="310" x2="640" y2="310"/>
+    <line x1="180" y1="120" x2="180" y2="330"/>
+    <line x1="340" y1="120" x2="340" y2="330"/>
+    <line x1="500" y1="120" x2="500" y2="330"/>
+  </g>
+  <text x="340" y="66" text-anchor="middle" font-family="sans-serif" font-size="36" font-weight="500" fill="#FFFFFF">铁路足迹</text>
+  <rect x="292" y="80" width="96" height="3" rx="1.5" fill="#FF9D4D"/>
+  <text x="340" y="104" text-anchor="middle" font-family="sans-serif" font-size="14" letter-spacing="3" fill="#9FB0C8">CHINA RAILWAY FOOTPRINT</text>
+  <g fill="none" stroke="#3E5C86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7">
+    <polyline points="120,205 205,175"/>
+    <polyline points="205,175 205,255"/>
+    <polyline points="335,190 355,262"/>
+    <polyline points="470,192 435,282"/>
+    <polyline points="545,170 515,258"/>
+    <polyline points="150,150 120,205"/>
+    <polyline points="585,275 600,225"/>
+  </g>
+  <g fill="none" stroke="#FF9D4D" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="150,150 205,175 270,160 335,190 405,168 470,192 545,170"/>
+    <polyline points="205,255 275,280 355,262 435,282 515,258 585,275"/>
+    <polyline points="250,225 320,238 390,222 460,240"/>
+  </g>
+  <g fill="#FF9D4D">
+    <circle cx="150" cy="150" r="4"/><circle cx="205" cy="175" r="4"/><circle cx="270" cy="160" r="4"/><circle cx="335" cy="190" r="4"/><circle cx="405" cy="168" r="4"/><circle cx="470" cy="192" r="4"/><circle cx="545" cy="170" r="4"/>
+    <circle cx="205" cy="255" r="4"/><circle cx="275" cy="280" r="4"/><circle cx="355" cy="262" r="4"/><circle cx="435" cy="282" r="4"/><circle cx="515" cy="258" r="4"/><circle cx="585" cy="275" r="4"/>
+    <circle cx="250" cy="225" r="4"/><circle cx="320" cy="238" r="4"/><circle cx="390" cy="222" r="4"/><circle cx="460" cy="240" r="4"/>
+  </g>
+  <g fill="#5A6B82">
+    <circle cx="120" cy="205" r="4"/><circle cx="600" cy="225" r="4"/>
+  </g>
+  <g>
+    <line x1="120" y1="350" x2="156" y2="350" stroke="#FF9D4D" stroke-width="3" stroke-linecap="round"/>
+    <text x="164" y="355" font-family="sans-serif" font-size="13" fill="#C7D2E0">已走过</text>
+    <line x1="250" y1="350" x2="286" y2="350" stroke="#3E5C86" stroke-width="3" stroke-linecap="round"/>
+    <text x="294" y="355" font-family="sans-serif" font-size="13" fill="#C7D2E0">未走过 · 迷雾</text>
+  </g>
+</svg>

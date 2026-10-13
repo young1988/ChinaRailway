@@ -17,6 +17,7 @@
     python3 process_conventional.py
     MIN_KM=60 SIMPLIFY_TOL=0.005 python3 process_conventional.py
 """
+import glob
 import json
 import os
 import sys
@@ -27,6 +28,7 @@ import process_lines as P  # 复用 stitch / merge_chains / simplify / 坐标转
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(HERE, "raw_conv")
+HS_RAW_DIR = os.path.join(HERE, "raw_hs")
 ROOT = os.path.dirname(HERE)
 OUT_JSON = os.path.join(ROOT, "conventional_lines.json")
 OUT_JS = os.path.join(ROOT, "conventional_lines.js")
@@ -79,18 +81,35 @@ def is_link(name):
     return any(w in name for w in LINK_WORDS)
 
 
-def load_hs_names():
-    """高铁数据里已有的线路名，普速这边要跳过，避免重复绘制。"""
-    if not os.path.exists(HS_JSON):
-        print(f"  ! 未找到 {HS_JSON}，跳过去重（会造成高铁/普速重叠绘制）")
-        return set()
-    d = json.load(open(HS_JSON, encoding="utf-8"))
-    names = set(d.get("lines", {}).keys())
-    print(f"  高铁数据已有 {len(names)} 条线路名，普速将跳过同名者")
-    return names
+def load_hs_way_ids():
+    """高铁侧已收录的 **way id** 集合，普速这边按 id 跳过，避免同一条 way 画两遍。
+
+    历史 bug：原先按「线路名」跳过（skip = 高铁库里的线路名集合），
+    于是一条线路只要**部分区段**被 OSM 标了 highspeed=yes，整条线的普速主体
+    就会被普速侧丢弃。实测因此丢了 19 条线、7971 km，包括：
+      京哈线 4924 km、益湛线 1587 km、兰渝线 1181 km、京雄城际 118 km …
+    正确做法是按 way 粒度去重——高铁只该拿走 highspeed=yes 的那几段。
+    """
+    hs_ids = set()
+    for fn in sorted(glob.glob(os.path.join(HS_RAW_DIR, "*.json"))):
+        if os.path.basename(fn) == "summary.json":
+            continue
+        try:
+            data = json.load(open(fn, encoding="utf-8"))
+        except Exception:
+            continue
+        for e in data.get("elements", []):
+            if e.get("type") != "way":
+                continue
+            tags = e.get("tags", {}) or {}
+            # 只认高铁侧真正会收录的 way：highspeed=yes
+            if tags.get("highspeed") == "yes":
+                hs_ids.add(e.get("id"))
+    print(f"  高铁侧 highspeed=yes 的 way {len(hs_ids)} 条，普速将按 id 跳过这些")
+    return hs_ids
 
 
-def load_all(skip):
+def load_all(skip_ids):
     """返回 {name: [(pts, tags), ...]}，已按 way id 去重。"""
     by_name = defaultdict(list)
     seen_ids = set()
@@ -113,20 +132,20 @@ def load_all(skip):
             wid = e.get("id")
             if wid in seen_ids:
                 continue          # 跨省重复的 way
+            if wid in skip_ids:
+                skipped += 1
+                continue          # 高铁侧已按 highspeed=yes 收录的同一批 way
             geom = e.get("geometry") or []
             tags = e.get("tags", {})
             name = tags.get("name")
             if not name or len(geom) < 2:
                 continue
             name = clean_name(name)
-            if name in skip:
-                skipped += 1
-                continue
             seen_ids.add(wid)
             by_name[name].append(([(p["lat"], p["lon"]) for p in geom], tags))
         print(f"  {fn[:-5]:<8} 累计去重 way {len(seen_ids)} (+{len(seen_ids) - n_before})")
     if skipped:
-        print(f"  跳过 {skipped} 条与高铁同名的 way")
+        print(f"  跳过 {skipped} 条高铁侧已收录的 way（按 id，不按线路名）")
     return by_name
 
 
@@ -177,8 +196,8 @@ def build(name, items):
 def main():
     print(f"参数: MIN_KM={MIN_KM} SIMPLIFY_TOL={SIMPLIFY_TOL} "
           f"MERGE_TOL={MERGE_TOL} MIN_CHAIN={MIN_CHAIN} NDIGITS={NDIGITS}\n")
-    skip = load_hs_names()
-    by_name = load_all(skip)
+    skip_ids = load_hs_way_ids()
+    by_name = load_all(skip_ids)
     if not by_name:
         return
     print(f"\n去重后 {sum(len(v) for v in by_name.values())} 条 way，"
