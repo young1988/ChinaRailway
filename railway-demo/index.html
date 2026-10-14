@@ -358,6 +358,7 @@
 <script src="patches.js"></script>
 <script src="gaps.js"></script>
 <script src="ferry.js"></script>
+<script src="trains.js"></script>
 <script src="line_py.js"></script>
 <script src="line_alias.js"></script>
 </head>
@@ -447,6 +448,7 @@
     <button class="btn btn-primary" style="margin-top:8px;width:100%;" id="tkAdd" onclick="App.addByTrain()">确认并点亮</button>
     <div class="sub" style="margin:6px 0 0;font-size:11px;">下车站只列出所选乘车站之后的站；选好就点确认</div>
   </div>
+  <div class="sub" id="tkAge" style="margin:6px 0 0;font-size:11px;"></div>
   <div class="sub" style="margin:6px 0 0;font-size:11px;">不知道车次走哪条线时，用下面的「手动录入车站」</div>
 
   <details style="margin-top:10px;">
@@ -665,7 +667,19 @@ const LINES = {
   }
 };
 
-const TRAINS = {
+// 车次表 = 内置兜底 + 抓取数据（trains.js）合并。
+//
+// 为什么要有两套：
+//   * TRAINS_BASE 是**手写兜底**，保证没有任何额外文件时页面也能用；
+//   * TRAINS_EXT 由 tools/train_fetch.py 从 12306 抓，带**完整经停站**（stops），
+//     准确且可定期刷新。
+//
+// 实测教训：手写车次表**非常容易过时**。2026-10 体检发现 12 个车次里 9 个已错——
+//   G101 手写「北京南→南京南」，实际已改成「北京朝阳→牡丹江」（改线，编号没变）
+//   Z41  手写「兰州→乌鲁木齐」，实际是「上海→乌鲁木齐」
+//   K113 手写「成都→昆明」，**已被裁撤**（改成 K1130/K1131/K1132）
+// 所以 `stops`（站序）才是权威数据，`line` 只用于显示线路名。
+const TRAINS_BASE = {
   'G1':    { line: 'jinghu',    from: '北京南',  to: '上海虹桥' },
   'G101':  { line: 'jinghu',    from: '北京南',  to: '南京南' },
   'G79':   { line: 'jingguang', from: '北京西',  to: '广州南' },
@@ -679,6 +693,9 @@ const TRAINS = {
   'D2206': { line: 'hanrong',   from: '上海虹桥', to: '成都东' },
   'K1024': { line: 'longhai',   from: '连云港',  to: '兰州' }
 };
+const TRAINS = Object.assign({}, TRAINS_BASE, (window.TRAINS_EXT && window.TRAINS_EXT.trains) || {});
+// 抓取日期，供 UI 提示「车次数据可能不是最新的」
+const TRAINS_FETCHED_AT = (window.TRAINS_EXT && window.TRAINS_EXT.queryDate) || '';
 
 /* 手写坐标误差可达十几公里，会用错误站位点去匹配线路，
    所以这里一律覆盖成 OSM 的真实车站节点坐标（GCJ-02）。 */
@@ -2541,7 +2558,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.16.0';
+const APP_VERSION = '0.17.0';
 const APP_DATE = '2026-10-13';
 
 /* ============================================================
@@ -2705,6 +2722,16 @@ const App = {
       console.error('[地图初始化失败]', e);
       document.getElementById('map').innerHTML =
         '<div style="padding:40px;color:#888;font-size:13px;">地图组件加载失败，左侧面板功能仍可正常使用</div>';
+    }
+    // 车次库新鲜度提示：超过 60 天提醒刷新（python3 tools/train_fetch.py）
+    const ageEl = document.getElementById('tkAge');
+    const age = this.trainDataAge();
+    if (ageEl) {
+      ageEl.textContent = age == null
+        ? '车次库：仅内置 ' + Object.keys(TRAINS).length + ' 个预设车次（跑 python3 tools/train_fetch.py 可抓真实经停站）'
+        : (age > 60
+            ? '车次库：抓取于 ' + TRAINS_FETCHED_AT + '（已 ' + age + ' 天，建议重新运行 tools/train_fetch.py）'
+            : '车次库：抓取于 ' + TRAINS_FETCHED_AT + '（' + age + ' 天前，' + Object.keys(TRAINS).length + ' 个车次）');
     }
     const sel = document.getElementById('trainSel');
     Object.keys(TRAINS).forEach(code => {
@@ -3265,6 +3292,35 @@ const App = {
       '另：10月3日 K113 次 成都 至 昆明、8月12日 Z41 次 兰州 至 乌鲁木齐 行程同步导入。';
   },
 
+  // ---- 车次体检：存档里用过的车次，当前车次库里还有吗？----
+  //
+  // 车次号会被裁撤、改号、改线（实测 2026-10：K113 已被 K1130/K1131/K1132 取代，
+  // G101 从「北京南→南京南」改成了「北京朝阳→牡丹江」）。
+  // 但 v0.16.0 起的记录带**站名序列**，车次查不到也照样画得出来——
+  // 这里只把「查无此车次」的标出来让人知道，别让它静默地装作正常。
+  trainAudit() {
+    // 「在运营」以**抓取库**为准：内置兜底表里有的车次，可能早就裁撤了
+    // （实测 K113 在 TRAINS_BASE 里，但 12306 上已改成 K1130/K1131/K1132）
+    const ext = (window.TRAINS_EXT && window.TRAINS_EXT.trains) || null;
+    const used = new Set();
+    (this.items || []).forEach(it => { if (it.code) used.add(it.code); });
+    const live = [], unknown = [], stale = [];
+    used.forEach(c => {
+      if (!ext) return;                       // 没有抓取数据就无从判断
+      if (ext[c]) live.push(c);
+      else if (TRAINS[c]) stale.push(c);      // 只在内置兜底里，抓取库里没有 -> 大概率已裁撤
+      else unknown.push(c);                   // 两边都没有
+    });
+    return { live: live, stale: stale, unknown: unknown, total: used.size };
+  },
+
+  // 车次库新鲜度：抓取数据多久前的
+  trainDataAge() {
+    if (!TRAINS_FETCHED_AT) return null;
+    const d = (Date.now() - new Date(TRAINS_FETCHED_AT + 'T00:00:00').getTime()) / 86400000;
+    return Math.max(0, Math.round(d));   // 抓取日按当天算，别出现 -10 天
+  },
+
   // ---- 按车次记录行程：粘贴车次 → 选乘降站 → 自动新增 ----
   //
   // 原来的导入要求粘贴含「A 至 B」的完整短信，但用户手上的车票往往只有车次和日期，
@@ -3309,19 +3365,28 @@ const App = {
       return this.toast('车次 ' + parsed.code +
         ' 还不在库里，用下面的「手动录入车站」填起终点即可');
     }
+    // 站序来源优先用抓取数据的 stops（权威、带全部经停站），
+    // 没有才回退到 LINES[t.line].stations（手写干线站序，站少且可能过时）
     const line = LINES[t.line];
-    if (!line || !line.stations || line.stations.length < 2) {
+    let stops, lineName;
+    if (t.stops && t.stops.length >= 2) {
+      stops = t.stops.slice();
+      lineName = (line && line.name) || '';
+    } else if (line && line.stations && line.stations.length >= 2) {
+      stops = line.stations.map(s => s[0]);
+      lineName = line.name;
+    } else {
       this._tkHide();
-      return this.toast('车次 ' + parsed.code + ' 的线路数据不完整');
+      return this.toast('车次 ' + parsed.code + ' 的经停站数据不完整');
     }
 
-    this._tk = { code: parsed.code, lineId: t.line, stops: line.stations.map(s => s[0]) };
+    this._tk = { code: parsed.code, lineId: t.line, stops: stops, fetched: !!t.stops };
     const box = document.getElementById('tkBox');
     const info = document.getElementById('tkInfo');
     if (info) {
-      info.textContent = parsed.code + ' · ' + line.name + ' · 全程 ' +
-        this._tk.stops.length + ' 站（' + this._tk.stops[0] + ' — ' +
-        this._tk.stops[this._tk.stops.length - 1] + '）';
+      info.textContent = parsed.code + (lineName ? ' · ' + lineName : '') + ' · 全程 ' +
+        stops.length + ' 站（' + stops[0] + ' — ' + stops[stops.length - 1] + '）' +
+        (this._tk.fetched ? '' : '（站序来自预设线路，可能不是最新）');
     }
     if (box) box.style.display = 'block';
     // 默认选起终点：乘车站=该车次的实际始发站，下车站=实际终到站；都不合法时退到前两站
@@ -3332,10 +3397,12 @@ const App = {
         '<option value="' + n + '"' + (n === t.from ? ' selected' : '') + '>' + n + '</option>'
       ).join('');
     }
+    // 默认选实际始发/终到站：抓取数据自带 from/to 时用它，
+    // 否则取站序首尾（手写数据里 from/to 可能已过时）
     let from = t.from, to = t.to;
-    const idx = this._tk.stops.indexOf(t.from);
-    // 车次的 from/to 不在这条干线的站序里（历史数据或改线），退而取首尾
-    if (idx < 0) { from = this._tk.stops[0]; to = this._tk.stops[this._tk.stops.length - 1]; }
+    if (!t.from || this._tk.stops.indexOf(t.from) < 0) from = this._tk.stops[0];
+    if (!t.to || this._tk.stops.indexOf(t.to) < 0) to = this._tk.stops[this._tk.stops.length - 1];
+    if (this._tk.stops.indexOf(from) > this._tk.stops.indexOf(to)) { const k = from; from = to; to = k; }
     this._fillToOptions(from, to);
     if (fromSel) fromSel.value = from;
     this._tkHighlight();
