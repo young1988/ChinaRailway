@@ -49,11 +49,9 @@ NAME_FIX = {
 
 import re as _re
 _ZH_ONLY = _re.compile(r'^[\u4e00-\u9fff·（）()\-—]+')
-# 境外线路：俄/蒙的西里尔与拉丁转写、朝鲜谚文、越南语（拉丁字母）
-_FOREIGN = _re.compile(r'[\u0400-\u04FF\uAC00-\uD7AF\u0100-\u024F]|[A-Za-z]')
 
 # 俄蒙宽轨。中国台湾部分线路是 1067 窄轨，属中国境内，不在此列
-_BAD_GAUGE = {"1520"}
+_BAD_GAUGE = {"1520", "1676"}   # 1520=俄蒙宽轨，1676=印度/巴西宽轨
 # 联络线低于该里程就不输出（站场内的小连接线对展示无意义）
 LINK_MIN_KM = float(os.environ.get("LINK_MIN_KM", 25))
 
@@ -71,10 +69,33 @@ def clean_name(name):
     return name
 
 
-def is_foreign(name):
-    """省级 bbox 很粗（内蒙古框到了蒙古国、黑龙江框到了俄罗斯），
-    会把境外铁路一起捞回来。名字里出现西里尔/谚文/拉丁字母的一律判定为境外。"""
-    return bool(_FOREIGN.search(name))
+# ---- 境内/境外判定 ----
+#
+# 省级 bbox 很粗（内蒙古框到蒙古国、黑龙江框到俄罗斯、广西框到越南），
+# 会把境外铁路一起捞回来，需要剔除。
+#
+# v0.15.0 评估过「按几何矩形框」判定，结论是**行不通**、已放弃：
+#   矩形无法表达「俄罗斯在黑龙江斜切走、西双版纳嵌在老泰之间」这类形状。
+#   实测 16 个回归点错 4 个：漠河(52.9N/122.5E)、黑河(50.25N/127.5E) 落进
+#   俄罗斯框；西双版纳(21.9N/100.8E) 落进缅甸框；延吉(42.9N/129.5E) 落进朝鲜框。
+#   调框能救一个伤另一个，纯属打地鼠。
+#
+# 名字判据看起来粗糙，但对**中国**是够用的：OSM 上中国境内的铁路基本都用
+# 汉字命名（含港澳台繁体），外文名基本就是境外。旧版正则的漏洞只是
+# 「搜索而非匹配」——`[A-Za-z]` 会让「廣深港高速鐵路 Guangzhou–Shenzhen…」这种
+# 中英混名被误判；`clean_name()` 先截取出汉字部分已经解决了这一类。
+#
+# 真正的米轨缺失另有原因，不是这个判据的锅（详见 tools/check_narrow_gauge.py）：
+#   蒙宝线  OSM 只画了 2 个 way / 2.4 km（蒙自附近），整条线基本没录入
+#   玉河线  OSM 标的是 gauge=1435 而非米轨，且 classify 判成 conventional
+#   滇越铁路云南段（昆河线）在 OSM 上没有独立线路名，玉河线只覆盖了南段
+_FOREIGN = _re.compile(r'^[\u0400-\u04FF\uAC00-\uD7AF\u0100-\u024F]|^[A-Za-z]')
+_HAS_CN = _re.compile(r'[\u4e00-\u9fff]')
+
+
+def is_foreign_name(name):
+    """名字里完全不含汉字 → 境外。汉字名（含港澳台繁体）→ 境内。"""
+    return not _HAS_CN.search(name)
 
 
 def is_link(name):
@@ -209,11 +230,11 @@ def main():
         if not r:
             dropped.append(name)
             continue
-        # 境外宽轨（俄/蒙 1520mm）与境外语种名一律剔除
+        # 境外宽轨（俄蒙 1520mm / 印度巴西 1676mm）与外文名线路一律剔除
         if str(r["gauge"]) in _BAD_GAUGE:
             foreign.append(name)
             continue
-        if is_foreign(name):
+        if is_foreign_name(name):
             foreign.append(name)
             continue
         (links if r["isLink"] else lines).append(r)

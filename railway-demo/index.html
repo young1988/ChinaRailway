@@ -216,6 +216,7 @@
   #linePop .lp-stats .dot.hs { background:#185fa5; }
   #linePop .lp-stats .dot.cv { background:#8a8a86; }
   #linePop .lp-stats .dot.nw { background:#b08d4f; }
+  #linePop .lp-stats .dot.ferry { background:#4aa8c4; }
   #linePop .lp-search { flex:1; padding:6px 8px; border:1px solid #e3e3e3; border-radius:7px; font-size:12px; outline:none; min-width:0; }
   #linePop .lp-search:focus { border-color:#2f6fed; }
   #linePop .lp-count { font-size:11px; color:#999; white-space:nowrap; }
@@ -254,6 +255,7 @@
   .lp-item .tag { font-size:10px; padding:1px 5px; border-radius:4px; white-space:nowrap; flex:none; }
   .lp-item .tag.hs { background:#e6f1fb; color:#185fa5; }
   .lp-item .tag.cv { background:#f1efe8; color:#5f5e5a; }
+  .lp-item .tag.ferry { background:#e0f2f8; color:#0e6d86; }
   .lp-item .tag.nw { background:#f3ece2; color:#8a6d3b; }
   .lp-item.on .tag { background:rgba(255,255,255,.25); color:#fff; }
   /* 底部：选中计数 + 全选 / 全部取消 */
@@ -292,6 +294,7 @@
   body.dark .lp-item.on .lp-box { background:#fff; border-color:#fff; }
   body.dark .lp-item .tag.hs { background:#1d2a3d; color:#7ab4f0; }
   body.dark .lp-item .tag.cv { background:#2c291e; color:#d8b26a; }
+  body.dark .lp-item .tag.ferry { background:#173038; color:#6fcfe8; }
   body.dark .lp-item .tag.nw { background:#33291b; color:#c9a86a; }
   body.dark #linePop .lp-foot { border-top-color:#33373e; }
   body.dark #linePop .lp-sel { color:#8b9096; }
@@ -354,6 +357,7 @@
 <script src="aliases.js"></script>
 <script src="patches.js"></script>
 <script src="gaps.js"></script>
+<script src="ferry.js"></script>
 <script src="line_py.js"></script>
 <script src="line_alias.js"></script>
 </head>
@@ -405,6 +409,7 @@
     <span class="chip on" data-cat="all" onclick="App.setLineCat('all')">全部</span>
     <span class="chip" data-cat="hs" onclick="App.setLineCat('hs')">高铁</span>
     <span class="chip" data-cat="cv" onclick="App.setLineCat('cv')">普速</span>
+    <span class="chip" data-cat="ferry" onclick="App.setLineCat('ferry')">轮渡</span>
     <span class="chip-sp"></span>
     <span class="chip" data-grp="type" onclick="App.setLineGroup('type')">按类型</span>
     <span class="chip on" data-grp="letter" onclick="App.setLineGroup('letter')">按字母</span>
@@ -980,7 +985,7 @@ const Net = {
     const GRID = parseFloat(window.__NET_GRID__ || 0.01);
     const pos = [], index = new Map();
     const adj = [], adjW = [], adjK = [], adjL = [];
-    const kinds = ['highspeed', 'conventional', 'narrow'];
+    const kinds = ['highspeed', 'conventional', 'narrow', 'ferry'];
     const lineNames = [], lineIdx = new Map();
     const RAD = Math.PI / 180;
 
@@ -1039,6 +1044,9 @@ const Net = {
     Object.keys(cv).forEach(nm => (cv[nm].polylines || []).forEach(pl => addPoly(pl, cv[nm].kind, nm)));
     const rl = window.LINES_REAL || {};
     Object.keys(rl).forEach(nm => (rl[nm].polylines || []).forEach(pl => addPoly(pl, rl[nm].kind, nm)));
+    // 跨海轮渡（手工建模，OSM 无数据）：接进图里，海口↔湛江就能走通了
+    const fr = (window.FERRIES && window.FERRIES.lines) || {};
+    Object.keys(fr).forEach(nm => (fr[nm].polylines || []).forEach(pl => addPoly(pl, fr[nm].kind, nm)));
 
     this.bridgeComponents(pos, adj, adjW, adjK, adjL);
 
@@ -1698,12 +1706,15 @@ const THEME_COLOR = {
   light: {
     highspeed:    { base: '#e6a3bc', lit: '#e0407f', label: '高铁/城际' },
     conventional: { base: '#c9ccd1', lit: '#f5a623', label: '普速铁路' },
-    narrow:       { base: '#cbb79c', lit: '#a9743c', label: '窄轨/米轨' }
+    narrow:       { base: '#cbb79c', lit: '#a9743c', label: '窄轨/米轨' },
+    // 轮渡用蓝绿色系：一眼能与铁路区分开。渡轮航线按虚线渲染（见 netStyles）
+    ferry:        { base: '#7fbfd4', lit: '#0e8fae', label: '跨海轮渡' }
   },
   dark: {
     highspeed:    { base: '#b3567f', lit: '#ff6fb0', label: '高铁/城际' },
     conventional: { base: '#5d666f', lit: '#ffb020', label: '普速铁路' },
-    narrow:       { base: '#7d6a48', lit: '#e0a860', label: '窄轨/米轨' }
+    narrow:       { base: '#7d6a48', lit: '#e0a860', label: '窄轨/米轨' },
+    ferry:        { base: '#3f7f92', lit: '#4fc3e8', label: '跨海轮渡' }
   }
 };
 let THEME = 'light';            // 线条明暗主题：light / dark（由底图类型派生）
@@ -1777,7 +1788,7 @@ const MapAdapter = {
     this.map = new TMap.Map('map', opts);
     this.applyFocus();
 
-    this._geoms = { base: [], hs: [], conv: [] };
+    this._geoms = { base: [], hs: [], conv: [], ferry: [] };
     const baseGeoms = this._geoms.base;
     let nbase = 0;
     Object.keys(GEOM).forEach(id => {
@@ -1831,6 +1842,26 @@ const MapAdapter = {
       map: this.map,
       styles: this.netStyles(),
       geometries: convGeoms
+    });
+
+    // 跨海轮渡：独立图层，虚线渲染。含两段——渡轮航线（虚）+ 岛内接驳段（实）
+    const ferryGeoms = [];
+    let fN = 0;
+    const fr = (window.FERRIES && window.FERRIES.lines) || {};
+    Object.keys(fr).forEach(nm => {
+      (fr[nm].polylines || []).forEach((pl, pi) => {
+        // polylines[0] 是渡轮航线（走虚线），其余是陆上接驳段（走实线）
+        const sid = pi === 0 ? 'net_ferry' : 'net_conventional';
+        ferryGeoms.push({
+          id: 'f' + (fN++), styleId: sid,
+          paths: pl.map(p => new TMap.LatLng(p[0], p[1]))
+        });
+      });
+    });
+    this.ferryLayer = new TMap.MultiPolyline({
+      map: this.map,
+      styles: this.netStyles(),
+      geometries: ferryGeoms
     });
 
     this.glowLayer = new TMap.MultiPolyline({
@@ -2056,13 +2087,22 @@ const MapAdapter = {
         s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: 3, borderWidth: 0, lineCap: 'round' });
         s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: 2, borderWidth: 0, lineCap: 'round' });
       }
+      // 轮渡：虚线。一眼区分「这段是坐船过的」而不是坐车——OSM 里没有
+      // route=ferry 的火车轮渡关系，这条线是按公开资料手工建模的，
+      // 画成实线会让人误以为是跨海大桥。
+      if (k === 'ferry') {
+        s['base_' + k] = new TMap.PolylineStyle({ color: C[k].base, width: 2.5, borderWidth: 0, lineCap: 'butt', dashArray: [9, 7] });
+        s['net_' + k]  = new TMap.PolylineStyle({ color: C[k].base, width: 1.8, borderWidth: 0, lineCap: 'butt', dashArray: [7, 6] });
+      }
     });
     return s;
   },
   litStyles() {
     const C = KC(); const s = {}; const w = litWidth();
     Object.keys(C).forEach(k => {
-      s['lit_' + k] = new TMap.PolylineStyle({ color: C[k].lit, width: w, borderWidth: 0, lineCap: 'round' });
+      s['lit_' + k] = k === 'ferry'
+        ? new TMap.PolylineStyle({ color: C[k].lit, width: w, borderWidth: 0, lineCap: 'butt', dashArray: [10, 7] })
+        : new TMap.PolylineStyle({ color: C[k].lit, width: w, borderWidth: 0, lineCap: 'round' });
     });
     return s;
   },
@@ -2077,12 +2117,13 @@ const MapAdapter = {
   // 销毁并重建全部折线图层（复用已构造的 geometries，开销极小）。
   // 主题 / 底图 / 迷雾切换都会改样式，统一走这里，并恢复路网显隐与已点亮线路。
   _rebuildLayers() {
-    ['baseLayer', 'hsLayer', 'convLayer', 'glowLayer', 'litLayer'].forEach(name => {
+    ['baseLayer', 'hsLayer', 'convLayer', 'ferryLayer', 'glowLayer', 'litLayer'].forEach(name => {
       const old = this[name];
       if (old) { try { old.setMap(null); } catch (e) {} }
     });
     this.baseLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.base });
     this.hsLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.hs });
+    this.ferryLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.ferry || [] });
     this.convLayer = new TMap.MultiPolyline({ map: this.map, styles: this.netStyles(), geometries: this._geoms.conv });
     this.glowLayer = new TMap.MultiPolyline({
       map: this.map,
@@ -2412,6 +2453,8 @@ const MapAdapter = {
   findLine(name) {
     const hs = (window.HSLINES && window.HSLINES.lines) || {};
     const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
+    const fr = (window.FERRIES && window.FERRIES.lines) || {};
+    if (fr[name]) return { kind: 'ferry', rec: fr[name], dual: false };
     const a = hs[name], b = cv[name];
     if (!a && !b) return null;
     if (!b) return { kind: a.kind, rec: a };
@@ -2478,7 +2521,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.14.0';
+const APP_VERSION = '0.15.0';
 const APP_DATE = '2026-10-13';
 
 /* ============================================================
@@ -2974,12 +3017,13 @@ const App = {
         m.set(n, {
           name: n,
           raw: raw,
-          kind: raw === 'highspeed' ? 'hs' : 'cv',   // narrow 等并入普速档
+          // ferry 单独一档（跨海轮渡）；narrow 并入普速档
+          kind: raw === 'highspeed' ? 'hs' : (raw === 'ferry' ? 'ferry' : 'cv'),
           _km: rec.totalKm || 0
         });
       }
     });
-    take(hs); take(cv);
+    take(hs); take(cv); take((window.FERRIES && window.FERRIES.lines) || {});
     this._allLines = [...m.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
     return this._allLines;
   },
@@ -3000,14 +3044,17 @@ const App = {
     if (this._mileage) return this._mileage;
     const hs = (window.HSLINES && window.HSLINES.lines) || {};
     const cv = (window.CONVLINES && window.CONVLINES.lines) || {};
-    const acc = { hs: 0, cv: 0, nw: 0 };
+    const fr = (window.FERRIES && window.FERRIES.lines) || {};
+    const acc = { hs: 0, cv: 0, nw: 0, fr: 0 };
     const add = (src) => Object.keys(src).forEach(n => {
       const rec = src[n] || {};
-      const k = rec.kind === 'highspeed' ? 'hs' : (rec.kind === 'narrow' ? 'nw' : 'cv');
+      const k = rec.kind === 'highspeed' ? 'hs'
+        : (rec.kind === 'narrow' ? 'nw' : (rec.kind === 'ferry' ? 'fr' : 'cv'));
       acc[k] += rec.totalKm || 0;
     });
-    add(hs); add(cv);
-    this._mileage = { hs: acc.hs, cv: acc.cv, nw: acc.nw, total: acc.hs + acc.cv + acc.nw };
+    add(hs); add(cv); add(fr);
+    this._mileage = { hs: acc.hs, cv: acc.cv, nw: acc.nw, fr: acc.fr,
+                      total: acc.hs + acc.cv + acc.nw + acc.fr };
     return this._mileage;
   },
   renderLineStats() {
@@ -3019,6 +3066,7 @@ const App = {
       '<span class="st"><i class="dot hs"></i>高铁 <b>' + fmt(m.hs) + '</b> km</span>' +
       '<span class="st"><i class="dot cv"></i>普速 <b>' + fmt(m.cv) + '</b> km</span>' +
       '<span class="st"><i class="dot nw"></i>窄轨 <b>' + fmt(m.nw) + '</b> km</span>' +
+      '<span class="st"><i class="dot ferry"></i>轮渡 <b>' + fmt(m.fr) + '</b> km</span>' +
       '<span class="st total">总计 <b>' + fmt(m.total) + '</b> km</span>';
     el.title = '各线路里程相加（并行复线/客专分别计算，未去重）';
   },
@@ -3037,7 +3085,7 @@ const App = {
       d.setAttribute('data-name', it.name);
       d.innerHTML = '<span class="lp-box"></span><span class="lp-dot"></span>' +
         '<span class="lp-name"></span><span class="tag ' + it.kind + '">' +
-        (it.raw === 'narrow' ? '窄轨' : (it.kind === 'hs' ? '高铁' : '普速')) + '</span>';
+        (it.raw === 'narrow' ? '窄轨' : (it.raw === 'ferry' ? '轮渡' : (it.kind === 'hs' ? '高铁' : '普速'))) + '</span>';
       d.querySelector('.lp-name').textContent = it.name;   // 文本节点赋值，避免线路名里的特殊字符
       const al = this.lineAliasIndex().get(it.name);
       if (al && al.length) d.title = '又称：' + al.join('、');
