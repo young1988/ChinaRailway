@@ -25,6 +25,8 @@ import os
 import re
 from collections import defaultdict
 
+from process_lines import wgs84_to_gcj02   # 与线路几何用同一套 GCJ-02 转换
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 RAW = os.path.join(HERE, "raw_st")
 ROOT = os.path.dirname(HERE)
@@ -159,8 +161,14 @@ def main():
         print("别名与主名冲突(丢弃): %d" % conflict)
 
     # ---- 输出 stations_all.js：id|名字|纬度|经度 ----
-    rows = ["%d|%s|%.4f|%.4f" % (nid, nm, lat, lon)
-            for nid, nm, lat, lon in sorted(records, key=lambda r: r[1])]
+    # 坐标系：OSM 原始坐标是 WGS-84，而本项目底图（腾讯地图）与线路几何都是 GCJ-02。
+    # 两套坐标系在中国境内相差 480~620 m（方向随纬度变），不转换会让所有车站标记
+    # 系统性偏离轨道与真实站位——本溪站就曾因此偏西约 500 m（v0.12.1 修复）。
+    # 去重/筛选仍用原始 WGS-84 坐标，只在落盘前转换。
+    rows = []
+    for nid, nm, lat, lon in sorted(records, key=lambda r: r[1]):
+        glat, glon = wgs84_to_gcj02(lat, lon)
+        rows.append("%d|%s|%.4f|%.4f" % (nid, nm, glat, glon))
     with open(os.path.join(ROOT, "stations_all.js"), "w", encoding="utf-8") as f:
         f.write("/* 全国铁路车站表（OSM railway=station/halt，已转 GCJ-02）\n"
                 "   格式：id|名字|纬度|经度，按行分隔；\n"
@@ -170,7 +178,8 @@ def main():
     # ---- 输出 stations_real.js：id -> [lat, lon] ----
     real = {}
     for nid, nm, lat, lon in records:
-        real[str(nid)] = [round(lat, 4), round(lon, 4)]
+        glat, glon = wgs84_to_gcj02(lat, lon)
+        real[str(nid)] = [round(glat, 4), round(glon, 4)]
     with open(os.path.join(ROOT, "stations_real.js"), "w", encoding="utf-8") as f:
         f.write("/* 车站坐标表：OSM node id -> [纬度, 经度]（GCJ-02），按 id 覆盖坐标用 */\n")
         f.write("window.STATIONS_REAL=" + json.dumps(real, ensure_ascii=False) + ";\n")

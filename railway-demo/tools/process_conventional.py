@@ -6,7 +6,7 @@
 普速路网密度是高铁的 2~3 倍（河南一省就 61914 个原始点），
 沿用高铁的参数会产出 850KB+ 的文件。这里默认开更激进的压缩：
 
-  - SIMPLIFY_TOL 0.0015 → 0.003（约 330m 容差；普速多长直段，视觉损失极小）
+  - SIMPLIFY_TOL 0.003 → 0.001（约 100m 容差；城市密集区不再切角，代价是文件 680KB→1238KB）
   - 坐标保留 5 位 → 4 位（约 11m 精度，远小于底图最小可视比例尺）
   - MIN_KM 25 → 40（普速里有大量几十公里的支线/专用线碎片段）
 
@@ -35,7 +35,7 @@ OUT_JS = os.path.join(ROOT, "conventional_lines.js")
 HS_JSON = os.path.join(ROOT, "highspeed_lines.json")
 
 MIN_KM = float(os.environ.get("MIN_KM", 40))
-SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.003))
+SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.001))
 MERGE_TOL = float(os.environ.get("MERGE_TOL", P.MERGE_TOL))
 MIN_CHAIN = int(os.environ.get("MIN_CHAIN", P.MIN_CHAIN))
 # 坐标小数位：5 位约 1m，4 位约 11m。普速用 4 位，够用且省 8% 体积

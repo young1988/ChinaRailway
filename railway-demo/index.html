@@ -971,9 +971,13 @@ const Net = {
   build() {
     if (this.g) return this.g;
     // 端点吸附网格。0.002(200m) 太小：跨线接续点对不上，实测 14 组区间有 6 组
-    // 直接找不到路径而退化成直线。0.02(约 2.2km) 是甜点——能接上车站/枢纽处的
-    // 跨线节点，又不至于把两条独立走廊并成一条。再往上收益就衰减了。
-    const GRID = parseFloat(window.__NET_GRID__ || 0.02);
+    // 直接找不到路径而退化成直线。
+    // v0.13.0 起由 0.02(约 2.2km) 降到 0.01(约 1.1km)：吸附网格同时决定了
+    // 「站点到最近顶点的距离」——同一格里的点会被合并成一个节点，所以格子越大、
+    // 站点吸附误差越大（用户实测本溪偏到 1.36km、北京南 1.05km，表现为到站后
+    // 要往回拐一个大弯）。实测 0.01：吸附中位 216→155m、>500m 的站 6/15→2/15，
+    // 连通性回归 8/8 仍全通，顶点 71k→101k、建图 266→316ms、算路 15ms 不变。
+    const GRID = parseFloat(window.__NET_GRID__ || 0.01);
     const pos = [], index = new Map();
     const adj = [], adjW = [], adjK = [], adjL = [];
     const kinds = ['highspeed', 'conventional', 'narrow'];
@@ -1095,16 +1099,27 @@ const Net = {
   },
 
   // 站点吸附：找最近的图节点，超过 maxKm 视为附近没有线路数据
-  nearest(pt, maxKm) {
+  // 找离 pt 最近的图节点。
+  // pref 非空时优先选「挂有该类型边」的节点：并行的高/普速线在同一走廊上，
+  // 不带偏好时吸附到哪条线是随机的，会导致「选了高铁优先却从普速线起步」。
+  // 两类候选都在同一次扫描里取最近，避免两次全量遍历。
+  nearest(pt, maxKm, pref) {
     const g = this.build();
     const cosl = Math.cos(pt[0] * Math.PI / 180);
-    let best = -1, bd = Infinity;
+    let best = -1, bd = Infinity;        // 不分类型的最近节点
+    let bestP = -1, bdP = Infinity;      // 挂有偏好类型边的最近节点
     for (let i = 0; i < g.pos.length; i++) {
       const dy = (g.pos[i][0] - pt[0]) * 110.574;
       const dx = (g.pos[i][1] - pt[1]) * 111.320 * cosl;
-      const d = dx * dx + dy * dy;
-      if (d < bd) { bd = d; best = i; }
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bd) { bd = d2; best = i; }
+      if (!pref || d2 >= bdP) continue;
+      const ak = g.adjK[i] || [], al = g.adjL[i] || [];
+      for (let j = 0; j < al.length; j++) {
+        if (al[j] >= 0 && g.kinds[ak[j]] === pref) { bdP = d2; bestP = i; break; }
+      }
     }
+    if (pref && bestP >= 0) { best = bestP; bd = bdP; }
     if (maxKm && Math.sqrt(bd) > maxKm) return -1;
     return best;
   },
@@ -1117,7 +1132,10 @@ const Net = {
 
   // 全路网几万个节点，朴素 Dijkstra 的 O(n^2) 会直接卡死，必须上堆
   // pref = 'highspeed' | 'conventional' | null，非偏好类型的边按倍数加价
-  path(s, t, pref) {
+  // hard = true 时 pref 是**硬约束**：非偏好类型的边直接不走。
+  // 全网图把高/普速合成一张，GRID 吸附又让 7.8% 的节点同时挂两种类型的边，
+  // 软倍数（2 倍）挡不住「并行的线更直就更省」——实测高铁优先仍会混入几十公里普速。
+  path(s, t, pref, hard) {
     const g = this.build();
     const n = g.pos.length;
     if (s < 0 || t < 0 || s >= n || t >= n) return null;
@@ -1175,10 +1193,14 @@ const Net = {
       const av = g.adj[u], aw = g.adjW[u], al = g.adjL[u], ak = g.adjK[u];
       const cur = arrL[u];
       for (let i = 0; i < av.length; i++) {
+        // 硬约束：偏好类型存在时，非偏好类型的边直接不参与（区间没有那条线时
+        // 会在外层回退到软约束，并由 prefMissed 如实告知用户）
+        const kind = g.kinds[ak[i]];
+        if (hard && pref && kind !== pref) continue;
         // 换线惩罚：高铁与普速常在同一走廊并行，纯按里程最短路会在两线间反复横跳。
         // 真实的车不会这么开，所以每次换线额外计一段代价，路径自然倾向于走同一条线。
-        // 类型偏好用**乘法**而不是禁止：全程没有高铁时仍能沿普速走通，只是优先度低。
-        const mult = (pref && g.kinds[ak[i]] !== pref) ? PREF_MULT : 1;
+        // 类型偏好用**乘法**而不是禁止（soft 模式）：全程没有高铁时仍能沿普速走通。
+        const mult = (!hard && pref && kind !== pref) ? PREF_MULT : 1;
         const w = aw[i] * mult + ((cur >= 0 && al[i] !== cur) ? SWITCH_KM : 0);
         const v = av[i], nd = d + w;
         if (nd < dist[v]) { dist[v] = nd; prev[v] = u; pe[v] = i; arrL[v] = al[i]; hpush(v, nd); }
@@ -1502,23 +1524,39 @@ const Core = {
     const SNAP_KM = 20;
     const segs = [];
     const lineHit = {};
-    let gaps = 0, traced = 0;
+    let gaps = 0, traced = 0, prefMissed = false;
 
     for (let i = 0; i < stops.length - 1; i++) {
-      const a = Net.nearest([stops[i][1], stops[i][2]], SNAP_KM);
-      const b = Net.nearest([stops[i + 1][1], stops[i + 1][2]], SNAP_KM);
       let piece = null, kinds = null;
-      if (a >= 0 && b >= 0 && a !== b) {
-        const p = Net.path(a, b, pref);
-        if (p && p.nodes.length >= 2) {
-          // 首尾补上真实站点坐标，避免站点离轨道几百米时看着"没接上"
-          piece = [[stops[i][1], stops[i][2]]]
-            .concat(p.nodes.map(k => g.pos[k]))
-            .concat([[stops[i + 1][1], stops[i + 1][2]]]);
-          kinds = [p.kinds[0]].concat(p.kinds, [p.kinds[p.kinds.length - 1]]);
-          p.lines.forEach(l => { if (l) lineHit[l] = (lineHit[l] || 0) + 1; });
-          traced++;
+      // 偏好先按**硬约束**试：起终点也用偏好吸附，避免起步就落到另一类型的线上。
+      // 走不通（该区间确实没有那种线路）才回退软约束，并如实标记。
+      if (pref) {
+        const a = Net.nearest([stops[i][1], stops[i][2]], SNAP_KM, pref);
+        const b = Net.nearest([stops[i + 1][1], stops[i + 1][2]], SNAP_KM, pref);
+        if (a >= 0 && b >= 0 && a !== b) {
+          const p = Net.path(a, b, pref, true);
+          if (p && p.nodes.length >= 2) piece = p;
         }
+        if (!piece) prefMissed = true;
+      }
+      if (!piece) {
+        const a = Net.nearest([stops[i][1], stops[i][2]], SNAP_KM);
+        const b = Net.nearest([stops[i + 1][1], stops[i + 1][2]], SNAP_KM);
+        if (a >= 0 && b >= 0 && a !== b) {
+          const p = Net.path(a, b, pref, false);
+          if (p && p.nodes.length >= 2) piece = p;
+        }
+      }
+      if (piece) {
+        const p = piece;
+        // 首尾补上真实站点坐标，避免站点离轨道几百米时看着"没接上"
+        const coords = [[stops[i][1], stops[i][2]]]
+          .concat(p.nodes.map(k => g.pos[k]))
+          .concat([[stops[i + 1][1], stops[i + 1][2]]]);
+        kinds = [p.kinds[0]].concat(p.kinds, [p.kinds[p.kinds.length - 1]]);
+        piece = coords;
+        p.lines.forEach(l => { if (l) lineHit[l] = (lineHit[l] || 0) + 1; });
+        traced++;
       }
       if (!piece) {
         gaps++;
@@ -1592,7 +1630,7 @@ const Core = {
       source, from: stops[0][0], to: stops[stops.length - 1][0],
       stops, stopIds: r.stopIds || stops.map(s => s[3] || null),
       segs, coords, km: Math.round(km),
-      pref: pref || null, kindKm,
+      pref: pref || null, kindKm, prefMissed,
       segKey: 'st:' + stops[0][0] + '>' + stops[stops.length - 1][0] +
               (pref ? '@' + pref : '')
     };
@@ -2413,7 +2451,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.12.0';
+const APP_VERSION = '0.13.0';
 const APP_DATE = '2026-10-13';
 
 /* ============================================================
@@ -2714,12 +2752,12 @@ const App = {
     }
   },
 
-  // 偏好没被满足时（区间根本没有那条线），如实告诉用户，别让他以为选错了
+  // 偏好没被满足时（区间根本没有那种线路），如实告诉用户，别让他以为选错了
+  // v0.13.0 起偏好是硬约束：满足时一定是 100%，不满足时会走 soft 回退并置 prefMissed
   prefWarn(r) {
     if (!r.pref || !r.km) return '';
-    const got = (r.kindKm && r.kindKm[r.pref]) || 0;
-    if (got / r.km >= 0.5) return '';
-    return '（该区间没有' + (r.pref === 'highspeed' ? '高铁' : '普速') + '线路，按实际可走的算）';
+    if (r.prefMissed) return '（该区间没有' + (r.pref === 'highspeed' ? '高铁' : '普速') + '线路，按实际可走的算）';
+    return '';
   },
 
   addByStations() {

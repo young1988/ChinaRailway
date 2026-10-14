@@ -34,7 +34,7 @@ OUT_JS = os.path.join(ROOT, "highspeed_lines.js")
 
 # 低于该里程的线路视为站段/联络线碎片段，单独归类不进主线
 MIN_KM = float(os.environ.get("MIN_KM", 25))
-SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.0015))
+SIMPLIFY_TOL = float(os.environ.get("SIMPLIFY_TOL", 0.001))
 MERGE_TOL = float(os.environ.get("MERGE_TOL", P.MERGE_TOL))
 MIN_CHAIN = int(os.environ.get("MIN_CHAIN", P.MIN_CHAIN))
 
