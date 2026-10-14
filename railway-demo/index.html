@@ -431,12 +431,32 @@
   <div class="sub" id="meta" style="margin:0 0 12px;"></div>
   <div id="panelBody">
 
-  <div class="sec-title">导入行程（粘贴 12306 短信 / 订单文本）</div>
-  <textarea id="paste" placeholder="例：您购买的 5月1日 G1 次 北京南 至 上海虹桥 列车已开具电子发票"></textarea>
-  <div>
-    <button class="btn btn-primary" onclick="App.importFromText()">解析并点亮</button>
-    <button class="btn" onclick="App.fillSample()">填入示例</button>
+  <div class="sec-title">按车次记录行程</div>
+  <input class="st-in" id="tkCode" placeholder="粘贴车次，如 G1373（可连日期一起粘：G1373 5月1日）" autocomplete="off" style="width:100%;">
+  <div style="display:flex;gap:6px;margin-top:6px;">
+    <input class="st-in" id="tkDate" placeholder="日期（可选）" autocomplete="off" style="flex:1;">
+    <button class="btn btn-primary" style="margin:0;padding:0 14px;" onclick="App.lookupTrain()">查经停站</button>
   </div>
+  <div id="tkBox" style="display:none;margin-top:8px;">
+    <div class="sub" id="tkInfo" style="margin:0 0 6px;font-size:11px;"></div>
+    <div class="st-grid">
+      <select class="st-in" id="tkFrom" onchange="App.onPickFrom()"></select>
+      <span class="arw">→</span>
+      <select class="st-in" id="tkTo" onchange="App.onPickTo()"></select>
+    </div>
+    <button class="btn btn-primary" style="margin-top:8px;width:100%;" id="tkAdd" onclick="App.addByTrain()">确认并点亮</button>
+    <div class="sub" style="margin:6px 0 0;font-size:11px;">下车站只列出所选乘车站之后的站；选好就点确认</div>
+  </div>
+  <div class="sub" style="margin:6px 0 0;font-size:11px;">不知道车次走哪条线时，用下面的「手动录入车站」</div>
+
+  <details style="margin-top:10px;">
+    <summary class="sub" style="cursor:pointer;font-size:11px;">粘贴 12306 短信 / 订单文本（自动识别起终点）</summary>
+    <textarea id="paste" placeholder="例：您购买的 5月1日 G1 次 北京南 至 上海虹桥 列车已开具电子发票" style="margin-top:6px;"></textarea>
+    <div>
+      <button class="btn btn-primary" onclick="App.importFromText()">解析并点亮</button>
+      <button class="btn" onclick="App.fillSample()">填入示例</button>
+    </div>
+  </details>
 
   <div class="sec-title">手动录入车站（自动吸附线路）<span id="nSt"></span></div>
   <div class="st-grid">
@@ -2521,7 +2541,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.15.0';
+const APP_VERSION = '0.16.0';
 const APP_DATE = '2026-10-13';
 
 /* ============================================================
@@ -2735,6 +2755,12 @@ const App = {
 
   // ---- 手动录入车站 ----
   bindStationInputs() {
+    // 车次框：回车即查经停站，不用再点按钮
+    const tk = document.getElementById('tkCode');
+    if (tk) {
+      tk.addEventListener('keydown', e => { if (e.key === 'Enter') this.lookupTrain(); });
+      tk.addEventListener('input', () => { if (this._tk) this._tkHide(); });
+    }
     ['stFrom', 'stTo', 'stVia'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -3237,6 +3263,162 @@ const App = {
     document.getElementById('paste').value =
       '【铁路12306】您购买的 5月1日 G1 次 北京南 至 上海虹桥 列车已开具电子发票；' +
       '另：10月3日 K113 次 成都 至 昆明、8月12日 Z41 次 兰州 至 乌鲁木齐 行程同步导入。';
+  },
+
+  // ---- 按车次记录行程：粘贴车次 → 选乘降站 → 自动新增 ----
+  //
+  // 原来的导入要求粘贴含「A 至 B」的完整短信，但用户手上的车票往往只有车次和日期，
+  // 起终点得自己回忆。这里改成：输入车次 → 列出该车次所在干线的**全部经停站**，
+  // 由用户在列表里点选乘车站与下车站 → 直接生成行程记录。
+  //
+  // 数据来源：TRAINS[code].line 给出干线 id，LINES[line].stations 就是经停站序列。
+  // 车次不在表里时给两级兜底：① 车站名里含该车次号（部分短信格式）② 明确提示改用手动录入。
+
+  // 从任意文本里抠出车次号与日期（车次允许带空格，如「G 1」）
+  _parseCodeAndDate(text) {
+    const s = String(text || '');
+    // 分两步：先用**宽松**的「字母+数字」抓候选（这样 X9999 也能抓到，
+    // 好给「不像车次号」的准确提示），再用白名单校验首字母是否合法。
+    const cm = s.toUpperCase().match(/\b([A-Z]\s?\d{1,4})\b/);
+    const code = cm ? cm[1].replace(/\s/g, '') : '';
+    const VALID = /^[GDCZTKYSL]\d{1,4}$/;
+    // 日期可能写在车次前（「5月1日 G1 次」）也可能只在独立输入框里
+    const dm = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    const date = dm ? (dm[1] + '月' + dm[2] + '日') : '';
+    return { code: VALID.test(code) ? code : '', rawCode: code, date: date };
+  },
+
+  lookupTrain() {
+    const raw = document.getElementById('tkCode').value || '';
+    const parsed = this._parseCodeAndDate(raw);
+    const dateInp = document.getElementById('tkDate');
+    // 车次框里带了日期就搬进日期框——用户明明在同一处写了日期，
+    // 保留上一次的旧日期反而更容易记错（实测踩过：输入「Z41 8月12日」时
+    // 日期框还留着上一段的 5月1日）
+    if (parsed.date && dateInp) dateInp.value = parsed.date;
+    if (!parsed.code) {
+      this._tkHide();
+      // 抓到了但字母不合法（如 X9999），和根本没抓到要分开说
+      return parsed.rawCode
+        ? this.toast('「' + parsed.rawCode + '」不像车次号（合法字母是 G D C Z T K Y S L），请检查')
+        : this.toast('没认出车次号，格式像 G1373 / K113 / Z41 这样');
+    }
+    const t = TRAINS[parsed.code];
+    if (!t) {
+      this._tkHide();
+      return this.toast('车次 ' + parsed.code +
+        ' 还不在库里，用下面的「手动录入车站」填起终点即可');
+    }
+    const line = LINES[t.line];
+    if (!line || !line.stations || line.stations.length < 2) {
+      this._tkHide();
+      return this.toast('车次 ' + parsed.code + ' 的线路数据不完整');
+    }
+
+    this._tk = { code: parsed.code, lineId: t.line, stops: line.stations.map(s => s[0]) };
+    const box = document.getElementById('tkBox');
+    const info = document.getElementById('tkInfo');
+    if (info) {
+      info.textContent = parsed.code + ' · ' + line.name + ' · 全程 ' +
+        this._tk.stops.length + ' 站（' + this._tk.stops[0] + ' — ' +
+        this._tk.stops[this._tk.stops.length - 1] + '）';
+    }
+    if (box) box.style.display = 'block';
+    // 默认选起终点：乘车站=该车次的实际始发站，下车站=实际终到站；都不合法时退到前两站
+    const fromSel = document.getElementById('tkFrom');
+    const toSel = document.getElementById('tkTo');
+    if (fromSel) {
+      fromSel.innerHTML = this._tk.stops.map(n =>
+        '<option value="' + n + '"' + (n === t.from ? ' selected' : '') + '>' + n + '</option>'
+      ).join('');
+    }
+    let from = t.from, to = t.to;
+    const idx = this._tk.stops.indexOf(t.from);
+    // 车次的 from/to 不在这条干线的站序里（历史数据或改线），退而取首尾
+    if (idx < 0) { from = this._tk.stops[0]; to = this._tk.stops[this._tk.stops.length - 1]; }
+    this._fillToOptions(from, to);
+    if (fromSel) fromSel.value = from;
+    this._tkHighlight();
+  },
+
+  // 下车站只列乘车站之后的站，避免选出「倒着坐」的组合
+  _fillToOptions(from, keepTo) {
+    const toSel = document.getElementById('tkTo');
+    if (!toSel || !this._tk) return;
+    const i = this._tk.stops.indexOf(from);
+    const rest = this._tk.stops.slice(i + 1);
+    if (!rest.length) {
+      toSel.innerHTML = '<option value="">（已是终点）</option>';
+      toSel.disabled = true;
+      return;
+    }
+    toSel.disabled = false;
+    const pick = rest.indexOf(keepTo) >= 0 ? keepTo : rest[rest.length - 1];
+    toSel.innerHTML = rest.map(n =>
+      '<option value="' + n + '"' + (n === pick ? ' selected' : '') + '>' + n + '</option>'
+    ).join('');
+  },
+
+  onPickFrom() {
+    const from = document.getElementById('tkFrom').value;
+    this._fillToOptions(from, null);
+    this._tkHighlight();
+  },
+
+  onPickTo() { this._tkHighlight(); },
+
+  // 把已选的乘降站高亮到地图上（含中间经停站，所见即所乘）
+  _tkHighlight() {
+    if (!this._tk || !MapAdapter.ready()) return 0;
+    const from = document.getElementById('tkFrom').value;
+    const to = document.getElementById('tkTo').value;
+    if (!from || !to) return 0;
+    const i = this._tk.stops.indexOf(from), j = this._tk.stops.indexOf(to);
+    if (i < 0 || j < 0 || j <= i) return 0;
+    const pts = this._tk.stops.slice(i, j + 1).map(nm => {
+      const r = Stations.resolve(nm);
+      if (!r) return null;
+      const p = r.pts && r.pts.length ? r.pts[0] : [r.lat, r.lon];
+      return { lat: p[0], lon: p[1], name: nm, end: nm === from || nm === to };
+    }).filter(Boolean);
+    return MapAdapter.highlightStations(pts);
+  },
+
+  _tkHide() {
+    this._tk = null;
+    const box = document.getElementById('tkBox');
+    if (box) box.style.display = 'none';
+  },
+
+  addByTrain() {
+    if (!this._tk) return this.toast('请先输入车次并点「查经停站」');
+    const from = document.getElementById('tkFrom').value;
+    const to = document.getElementById('tkTo').value;
+    if (!from || !to) return this.toast('请选择乘车站和下车站');
+    const i = this._tk.stops.indexOf(from), j = this._tk.stops.indexOf(to);
+    if (i < 0 || j < 0) return this.toast('选中的站不在该车次的经停站里');
+    if (j <= i) return this.toast('下车站要在乘车站之后');
+
+    const date = (document.getElementById('tkDate').value || '').trim();
+    // 经停站全带上：比只记起终点更贴合实际乘车段，也便于后续按站定位
+    const via = this._tk.stops.slice(i + 1, j);
+    const rec = {
+      kind: 'stops', from: from, via: via, to: to, code: this._tk.code,
+      pref: this._pref || null, ov: null, date: date, createdAt: Date.now()
+    };
+    const r = Core.buildTripByStops([from].concat(via, [to]), this._tk.code, null, this._pref);
+    if (r && r.error) return this.toast(r.error);
+    if (!r || r.ambiguous) {
+      // 同名车站多解、无法自动定时交给 resolveStops 的消歧流程，由 addItem 走老路径
+      return this.toast('这几个站存在同名不同站，已按最近邻定位');
+    }
+    const t = this.addItem(rec);
+    if (!t) return;
+    // 成功后就绪下一段：清空车次框保留日期，方便连续记录同一趟车的多个区间
+    document.getElementById('tkCode').value = '';
+    this._tkHide();
+    this.refresh();
+    this.toast('已记录 ' + rec.code + ' ' + from + ' → ' + to + '（' + Math.round(t.km) + ' km）');
   },
 
   importFromText() {
