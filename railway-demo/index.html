@@ -1075,27 +1075,54 @@ const Net = {
       (b[1] - a[1]) * 111.320 * Math.cos((a[0] + b[0]) / 2 * RAD)
     );
     let bridges = 0;
+    // 跨分量搭桥（原有逻辑）：只在**不同连通分量**之间连，且距离 <= BRIDGE_KM。
+    // 实测这个条件极少命中（跨分量且 <6km 的节点对全国 0 对）——因为大部分断口的两端
+    // 会被其它线路绕一圈接进同一分量，于是「本分量内已连通」而跳过搭桥，路径只能绕远路。
+    //
+    // 第二类：**同分量内的悬空端点**（度=1，说明这条线在此处就断了）接到 6km 内
+    // 最近的**主干节点**（度>=3，即在线路中间而不是尽头）。典型案例：
+    // 鸡西→穆棱 直线 90km 却算出 215km —— 滨绥线（牡丹江—穆棱）与城鸡线（鸡西—下城子）
+    // 在下城子以北约 4.6km 处断开（OSM 数据本身如此），而两者被沈佳高速线绕牡丹江
+    // 接成了同一分量，所以原逻辑跳过搭桥，只能绕一圈。
+    //
+    // 为什么用「度=1 + 度>=3」而不是「折线首尾」：断口常常落在折线**内部**
+    // （stitch 串接时把断口两侧的 way 接进了同一条 polyline，端点信息就丢了），
+    // 而「度=1」是图上的直接证据——这个点除了一条边之外什么都没有，说明它「到头了」。
+    // 用折线端点做判据时实测只捞到 715 对但**一个断口都没接上**；换成悬空端点后
+    // 命中 166 处（兰新客专线断在兰新线旁、京港高速线断在京九线旁等），全是真断段。
+    const BRIDGE_MAIN_MIN = 3;      // 主干节点最小度数
+    const BRIDGE_DANGLING = 1;      // 悬空端点的度数（只有 1 条边）
+    let bridges2 = 0;
     for (let i = 0; i < n; i++) {
+      if ((adj[i] || []).length !== BRIDGE_DANGLING) continue;
       const cy = Math.floor(pos[i][0] / CELL), cx = Math.floor(pos[i][1] / CELL);
+      let best = -1, bd = BRIDGE_KM;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const bucket = grid.get((cy + dy) + ',' + (cx + dx));
           if (!bucket) continue;
           for (const j of bucket) {
-            if (j <= i) continue;
-            if (find(i) === find(j)) continue;
+            // 不按 j>i 去重：悬空端点 i 的目标（主干节点）索引往往更小，
+            // 那样写会把大部分断口漏掉（下城子就踩过这个坑）。
+            // 重复风险不存在——i 恒为度=1、j 恒为度>=3，两者不可能互为对方。
+            if (j === i) continue;
+            if ((adj[j] || []).length < BRIDGE_MAIN_MIN) continue;
+            if (adj[i].indexOf(j) >= 0) continue;      // 已直接相连
             const w = kmOf(pos[i], pos[j]);
-            if (w > BRIDGE_KM) continue;
-            const k = adjK[i].length ? adjK[i][0] : 1;
-            const ln = adjL[i].length ? adjL[i][0] : 0;
-            adj[i].push(j); adjW[i].push(w); adjK[i].push(k); adjL[i].push(ln);
-            adj[j].push(i); adjW[j].push(w); adjK[j].push(k); adjL[j].push(ln);
-            bridges++;
+            if (w > bd) continue;
+            bd = w; best = j;
           }
         }
       }
+      if (best < 0) continue;
+      const k = adjK[i].length ? adjK[i][0] : 1;
+      const ln = adjL[i].length ? adjL[i][0] : 0;
+      adj[i].push(best); adjW[i].push(bd); adjK[i].push(k); adjL[i].push(ln);
+      adj[best].push(i); adjW[best].push(bd); adjK[best].push(k); adjL[best].push(ln);
+      bridges2++;
     }
     this._bridges = bridges;
+    this._bridgesDangling = bridges2;
   },
 
   // 站点吸附：找最近的图节点，超过 maxKm 视为附近没有线路数据
@@ -2451,7 +2478,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.13.0';
+const APP_VERSION = '0.14.0';
 const APP_DATE = '2026-10-13';
 
 /* ============================================================
