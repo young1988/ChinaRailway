@@ -790,6 +790,38 @@ const TrainAPI = {
     });
   },
 
+  // 浏览器**直连** 12306 的 search 接口（有 CORS，连 file:// 的 Origin: null 都回显，
+  // 实测可用）。拿不到经停站，但能回答「这个车次还在不在、起终站是哪」——
+  // 服务端没起时，这比一句干巴巴的「不在库里」有用得多。
+  //
+  // 注意与 lookup() 的分工：lookup 走本地代理（有完整经停站），
+  // directSearch 是**兜底**，只在代理不可用时用，且只探存活性。
+  directSearch(code, day) {
+    code = String(code || '').toUpperCase();
+    if (!code || typeof fetch !== 'function') {
+      return Promise.resolve({ ok: false, reason: 'no-fetch' });
+    }
+    // 日期用「今天+10 天」：当天的时刻表 12306 未必排全，往后几天更稳
+    const d = day || new Date(Date.now() + 10 * 86400000);
+    const p = n => String(n).padStart(2, '0');
+    const ymd = '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate());
+    const url = 'https://search.12306.cn/search/v1/train/search?keyword=' +
+      encodeURIComponent(code) + '&date=' + ymd;
+    return fetch(url, { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        // search 是模糊匹配（查 Z158 会连带返回 Z1582 之类），必须精确筛
+        const rows = (d && d.data) || [];
+        let hit = null;
+        for (const r of rows) {
+          if ((r.station_train_code || '').toUpperCase() === code) { hit = r; break; }
+        }
+        if (!hit) return { ok: false, reason: 'not-found' };
+        return { ok: true, from: hit.from_station, to: hit.to_station, trainNo: hit.train_no };
+      })
+      .catch(() => ({ ok: false, reason: 'network' }));
+  },
+
   // 把用户填的日期规整成 yyyy-MM-dd。
   // 只传「未来且在预售期内」的日期：过去的日期 12306 查不到，
   // 传回去只会拿到空结果，不如不传让服务端挑一个能查到时刻表的日期。
@@ -2737,7 +2769,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.18.0';
+const APP_VERSION = '0.19.0';
 const APP_DATE = '2026-10-15';
 
 /* ============================================================
@@ -3509,6 +3541,8 @@ const App = {
 
   // 联网复核存档里用过的车次：让 12306 说句话，别只信几个月的快照。
   // 逐个查（服务端有缓存+单飞，重复查很快），结果显示在 #tkAudit。
+  // 服务端没起时自动降级成浏览器直连 search 接口（有 CORS）：
+  // 那样查不到经停站，但「车次还在不在」照样能问出来。
   trainAuditLive() {
     const used = [];
     (this.items || []).forEach(it => {
@@ -3519,10 +3553,11 @@ const App = {
       if (out) out.textContent = '存档里还没有带车次的记录';
       return;
     }
-    if (!TrainAPI.canTry()) {
-      if (out) out.textContent = '实时复核需要服务端：python3 railway-demo/server.py';
+    if (typeof fetch !== 'function') {
+      if (out) out.textContent = '当前环境不支持联网查询';
       return;
     }
+    const useProxy = TrainAPI.canTry();
     const res = { live: [], gone: [], unsure: [] };
     let i = 0;
     const step = () => {
@@ -3531,12 +3566,14 @@ const App = {
         let txt = '联网复核完成：仍在运营 ' + res.live.length + ' 个';
         if (res.gone.length) txt += '，查不到 ' + res.gone.length + ' 个（' + res.gone.join('、') + '）';
         if (res.unsure.length) txt += '，未能确认 ' + res.unsure.length + ' 个（' + res.unsure.join('、') + '）';
+        if (!useProxy) txt += '（未起服务端，仅核实车次是否还在，未取经停站）';
         out.textContent = txt;
         return;
       }
       const code = used[i++];
       if (out) out.textContent = '正在联网复核 ' + code + '（' + i + '/' + used.length + '）…';
-      TrainAPI.lookup(code, '').then(r => {
+      const q = useProxy ? TrainAPI.lookup(code, '') : TrainAPI.directSearch(code);
+      q.then(r => {
         if (r.ok) res.live.push(code);
         else if (r.reason === 'not-found') res.gone.push(code);
         else res.unsure.push(code);
@@ -3606,7 +3643,19 @@ const App = {
           '实时查询需 python3 railway-demo/server.py');
       }
       this._tkHide();
-      return this.toast(this._tkFailText(code, { reason: 'no-proxy' }));
+      // 服务端没起也别直接判死刑：search 接口有 CORS，浏览器能直连，
+      // 至少告诉用户「车次还在不在、起终站是哪」，再说经停站要起服务端。
+      return TrainAPI.directSearch(code).then(r => {
+        if (r.ok) {
+          return this.toast('12306 上有时刻 ' + code + '：' + r.from + ' — ' + r.to +
+            '；经停站需启动服务端（python3 railway-demo/server.py）');
+        }
+        if (r.reason === 'not-found') {
+          return this.toast('12306 上查不到 ' + code +
+            '（可能已裁撤或不在预售期），可用下面的「手动录入车站」填起终点');
+        }
+        return this.toast(this._tkFailText(code, { reason: 'no-proxy' }));
+      });
     }
     const ageEl = document.getElementById('tkAge');
     const ageTxt = ageEl ? ageEl.textContent : '';
