@@ -449,6 +449,10 @@
     <div class="sub" style="margin:6px 0 0;font-size:11px;">下车站只列出所选乘车站之后的站；选好就点确认</div>
   </div>
   <div class="sub" id="tkAge" style="margin:6px 0 0;font-size:11px;"></div>
+  <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap;">
+    <button class="btn" style="margin:0;padding:2px 8px;font-size:11px;" onclick="App.trainAuditLive()">联网复核已录入车次</button>
+    <span class="sub" id="tkAudit" style="font-size:11px;"></span>
+  </div>
   <div class="sub" style="margin:6px 0 0;font-size:11px;">不知道车次走哪条线时，用下面的「手动录入车站」</div>
 
   <details style="margin-top:10px;">
@@ -696,6 +700,181 @@ const TRAINS_BASE = {
 const TRAINS = Object.assign({}, TRAINS_BASE, (window.TRAINS_EXT && window.TRAINS_EXT.trains) || {});
 // 抓取日期，供 UI 提示「车次数据可能不是最新的」
 const TRAINS_FETCHED_AT = (window.TRAINS_EXT && window.TRAINS_EXT.queryDate) || '';
+
+/* ============================================================
+   TrainAPI：实时车次查询（方案 B）
+
+   为什么静态页要一个"可选"的实时源
+   --------------------------------
+   车次号会被裁撤/改号/改线（实测 K113 已变成 K1130/K1131/K1132，
+   G101 从「北京南→南京南」改成了「北京朝阳→牡丹江」），
+   静态快照 trains.js 再新也会过期。而 12306 的完整经停站接口
+   （kyfw queryTrainInfo）**不发 CORS 头**，浏览器直连必被拦，
+   所以必须有个服务端中转 —— 就是同目录的 server.py。
+
+   设计成"可选"而不是"必需"：
+     * 有 server.py（或别的代理）→ 实时数据，查得快、永远是最新的；
+     * 没有（file:// 直开、GitHub Pages 裸部署）→ 自动回退本地快照，
+       功能不瞎，只是数据可能是几个月前的。
+   两边都不依赖对方，任一环节挂掉页面照常能用。
+   ============================================================ */
+const TrainAPI = {
+  state: 'unknown',        // unknown | on | off（探测结果，只探一次）
+  mem: {},                 // code -> 记录，本次会话内有效
+  LS_KEY: 'RW_TRAINAPI',
+  LS_TTL: 3 * 86400000,    // 本地缓存 3 天：离线时也能用上回查到的实时数据
+
+  // 代理地址。默认同源（server.py 托管页面时就是 http://127.0.0.1:8787）；
+  // 代理部署在别处时（Cloudflare Worker / 另一台机器），用
+  //   localStorage.setItem('RW_TRAINAPI_BASE', 'https://你的域名/api')
+  // 指过来，或用 URL 参数 ?api=https://你的域名/api 临时试。
+  base() {
+    let b = '';
+    try { b = localStorage.getItem('RW_TRAINAPI_BASE') || ''; } catch (e) {}
+    if (!b && typeof URLSearchParams === 'function') {
+      try {
+        const q = new URLSearchParams(location.search).get('api');
+        if (q) b = q;
+      } catch (e) {}
+    }
+    return String(b).replace(/\/+$/, '');
+  },
+
+  // file:// 直开时同源探测毫无意义（fetch 会被拦），
+  // 只有 http(s) 页面、或用户显式指定了远程代理时才值得试。
+  // 注意 typeof 兜底：非浏览器环境（单元测试的 vm 沙箱）里没有 location。
+  canTry() {
+    if (typeof fetch !== 'function') return false;
+    if (this.base()) return true;
+    return typeof location !== 'undefined' &&
+      (location.protocol === 'http:' || location.protocol === 'https:');
+  },
+
+  // 探测代理是否在线（结果缓存，整个会话只探一次）
+  probe() {
+    if (this.state !== 'unknown') return Promise.resolve(this.state === 'on');
+    if (!this.canTry()) { this.state = 'off'; return Promise.resolve(false); }
+    return fetch(this.base() + '/api/ping', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { this.state = (d && d.ok) ? 'on' : 'off'; return this.state === 'on'; })
+      .catch(() => { this.state = 'off'; return false; });
+  },
+
+  // 查一个车次 → Promise<{ok:true, rec} | {ok:false, reason}>
+  // rec = {from, to, stops, fetchedAt, trainNo}
+  lookup(code, date) {
+    code = String(code || '').toUpperCase();
+    if (!code) return Promise.resolve({ ok: false, reason: 'missing-code' });
+    const hit = this._lsGet(code);
+    if (hit) return Promise.resolve({ ok: true, rec: hit, cached: true });
+    if (this.state === 'off') return Promise.resolve({ ok: false, reason: 'no-proxy' });
+    return this.probe().then(on => {
+      if (!on) return { ok: false, reason: 'no-proxy' };
+      const q = '?code=' + encodeURIComponent(code) +
+        (date ? '&date=' + encodeURIComponent(date) : '');
+      return fetch(this.base() + '/api/train' + q, { cache: 'no-store' })
+        .then(r => r.json().catch(() => null))
+        .then(d => {
+          if (!d) return { ok: false, reason: 'bad-response' };
+          if (d.ok) {
+            const rec = { from: d.from, to: d.to, stops: d.stops,
+                          fetchedAt: d.date, trainNo: d.trainNo };
+            this.mem[code] = rec;
+            this._lsSet(code, rec);
+            return { ok: true, rec: rec, adjusted: d.adjusted };
+          }
+          // 查得到车次但没经停站时，服务端会把起终站带回来，别浪费
+          return { ok: false, reason: d.reason || 'failed', from: d.from, to: d.to };
+        })
+        .catch(() => ({ ok: false, reason: 'network' }));
+    });
+  },
+
+  // 把用户填的日期规整成 yyyy-MM-dd。
+  // 只传「未来且在预售期内」的日期：过去的日期 12306 查不到，
+  // 传回去只会拿到空结果，不如不传让服务端挑一个能查到时刻表的日期。
+  normDate(s) {
+    const s0 = String(s || '').trim();
+    let d = null, m = s0.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) d = new Date(+m[1], +m[2] - 1, +m[3]);
+    else {
+      m = s0.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+      if (m) {
+        const y = new Date().getFullYear();
+        d = new Date(y, +m[1] - 1, +m[2]);
+        // 「1月5日」在 12 月查，说的是明年
+        if (d.getTime() < Date.now() - 86400000) d = new Date(y + 1, +m[1] - 1, +m[2]);
+      }
+    }
+    if (!d || isNaN(d.getTime())) return '';
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const diff = Math.round((d - today) / 86400000);
+    if (diff < 0 || diff > 15) return '';
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  },
+
+  // 站序 → 干线 id（仅用于显示线路名，绘制靠 stops 本身）。
+  // 与 tools/train_fetch.py 的 guess_line 同一套打分：命中率 × 干线覆盖度。
+  guessLine(stops) {
+    if (!stops || stops.length < 2) return null;
+    const stopset = {};
+    stops.forEach(s => { stopset[s] = 1; });
+    let best = null, bestScore = 0;
+    Object.keys(LINES).forEach(lid => {
+      const names = (LINES[lid].stations || []).map(s => s[0]);
+      let hit = 0;
+      names.forEach(n => { if (stopset[n]) hit++; });
+      if (hit < 2) return;
+      const score = hit / Math.max(1, stops.length) * Math.min(1, hit / Math.max(1, names.length));
+      if (score > bestScore) { best = lid; bestScore = score; }
+    });
+    return bestScore >= 0.15 ? best : null;
+  },
+
+  // 把实时结果补上 line 字段（服务端不知道项目的干线划分）
+  decorate(rec) {
+    if (!rec) return rec;
+    if (!rec.line) rec.line = this.guessLine(rec.stops);
+    return rec;
+  },
+
+  reasonText(r) {
+    return ({
+      'no-proxy': '未连接服务端',
+      'network': '网络不通',
+      'not-found': '12306 查无此车次',
+      'no-stops': '经停站未取到',
+      'bad-response': '返回格式异常',
+      'missing-code': '车次号为空'
+    })[r] || ('查询失败（' + r + '）');
+  },
+
+  // ---- localStorage 缓存（3 天，最多存 200 条，防无限膨胀）----
+  _lsAll() {
+    try { return JSON.parse(localStorage.getItem(this.LS_KEY) || '{}'); }
+    catch (e) { return {}; }
+  },
+  _lsGet(code) {
+    if (this.mem[code]) return this.mem[code];
+    const all = this._lsAll(), hit = all[code];
+    if (hit && hit.at && Date.now() - hit.at < this.LS_TTL) {
+      this.mem[code] = hit.rec;
+      return hit.rec;
+    }
+    return null;
+  },
+  _lsSet(code, rec) {
+    const all = this._lsAll();
+    all[code] = { at: Date.now(), rec: rec };
+    const keys = Object.keys(all);
+    if (keys.length > 200) {           // 超量就淘汰最旧的
+      keys.sort((a, b) => all[a].at - all[b].at);
+      keys.slice(0, keys.length - 200).forEach(k => { delete all[k]; });
+    }
+    try { localStorage.setItem(this.LS_KEY, JSON.stringify(all)); } catch (e) {}
+  }
+};
 
 /* 手写坐标误差可达十几公里，会用错误站位点去匹配线路，
    所以这里一律覆盖成 OSM 的真实车站节点坐标（GCJ-02）。 */
@@ -2558,8 +2737,8 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.17.0';
-const APP_DATE = '2026-10-13';
+const APP_VERSION = '0.18.0';
+const APP_DATE = '2026-10-15';
 
 /* ============================================================
    Store：行程存档（本机持久化 + 多档案 + 导出导入）
@@ -2732,6 +2911,13 @@ const App = {
         : (age > 60
             ? '车次库：抓取于 ' + TRAINS_FETCHED_AT + '（已 ' + age + ' 天，建议重新运行 tools/train_fetch.py）'
             : '车次库：抓取于 ' + TRAINS_FETCHED_AT + '（' + age + ' 天前，' + Object.keys(TRAINS).length + ' 个车次）');
+      // 实时查询是加分项：探到代理就补一句，探不到也不报警（本地快照照常用）
+      TrainAPI.probe().then(on => {
+        if (!ageEl.isConnected) return;
+        ageEl.textContent += on
+          ? ' · 实时查询已就绪（12306）'
+          : ' · 实时查询未启用（python3 railway-demo/server.py 可开启）';
+      });
     }
     const sel = document.getElementById('trainSel');
     Object.keys(TRAINS).forEach(code => {
@@ -3321,6 +3507,44 @@ const App = {
     return Math.max(0, Math.round(d));   // 抓取日按当天算，别出现 -10 天
   },
 
+  // 联网复核存档里用过的车次：让 12306 说句话，别只信几个月的快照。
+  // 逐个查（服务端有缓存+单飞，重复查很快），结果显示在 #tkAudit。
+  trainAuditLive() {
+    const used = [];
+    (this.items || []).forEach(it => {
+      if (it.code && used.indexOf(it.code) < 0) used.push(it.code);
+    });
+    const out = document.getElementById('tkAudit');
+    if (!used.length) {
+      if (out) out.textContent = '存档里还没有带车次的记录';
+      return;
+    }
+    if (!TrainAPI.canTry()) {
+      if (out) out.textContent = '实时复核需要服务端：python3 railway-demo/server.py';
+      return;
+    }
+    const res = { live: [], gone: [], unsure: [] };
+    let i = 0;
+    const step = () => {
+      if (i >= used.length) {
+        if (!out) return;
+        let txt = '联网复核完成：仍在运营 ' + res.live.length + ' 个';
+        if (res.gone.length) txt += '，查不到 ' + res.gone.length + ' 个（' + res.gone.join('、') + '）';
+        if (res.unsure.length) txt += '，未能确认 ' + res.unsure.length + ' 个（' + res.unsure.join('、') + '）';
+        out.textContent = txt;
+        return;
+      }
+      const code = used[i++];
+      if (out) out.textContent = '正在联网复核 ' + code + '（' + i + '/' + used.length + '）…';
+      TrainAPI.lookup(code, '').then(r => {
+        if (r.ok) res.live.push(code);
+        else if (r.reason === 'not-found') res.gone.push(code);
+        else res.unsure.push(code);
+      }).catch(() => res.unsure.push(code)).then(step);
+    };
+    step();
+  },
+
   // ---- 按车次记录行程：粘贴车次 → 选乘降站 → 自动新增 ----
   //
   // 原来的导入要求粘贴含「A 至 B」的完整短信，但用户手上的车票往往只有车次和日期，
@@ -3359,50 +3583,150 @@ const App = {
         ? this.toast('「' + parsed.rawCode + '」不像车次号（合法字母是 G D C Z T K Y S L），请检查')
         : this.toast('没认出车次号，格式像 G1373 / K113 / Z41 这样');
     }
-    const t = TRAINS[parsed.code];
-    if (!t) {
-      this._tkHide();
-      return this.toast('车次 ' + parsed.code +
-        ' 还不在库里，用下面的「手动录入车站」填起终点即可');
-    }
-    // 站序来源优先用抓取数据的 stops（权威、带全部经停站），
-    // 没有才回退到 LINES[t.line].stations（手写干线站序，站少且可能过时）
-    const line = LINES[t.line];
-    let stops, lineName;
-    if (t.stops && t.stops.length >= 2) {
-      stops = t.stops.slice();
-      lineName = (line && line.name) || '';
-    } else if (line && line.stations && line.stations.length >= 2) {
-      stops = line.stations.map(s => s[0]);
-      lineName = line.name;
-    } else {
-      this._tkHide();
-      return this.toast('车次 ' + parsed.code + ' 的经停站数据不完整');
+    const code = parsed.code;
+    // 只有「未来且在预售期内」的日期才值得传给服务端，见 TrainAPI.normDate
+    const date = TrainAPI.normDate(dateInp ? dateInp.value : '');
+    const t = TRAINS[code];
+
+    // ① 本地快照已有完整站序：**先渲染**（不卡用户），再后台联网刷新。
+    //    快照可能是几个月前的，刷新后若站序变了就地用实时数据重渲染，
+    //    并尽量保留用户已经选好的乘降站。
+    if (t && t.stops && t.stops.length >= 2) {
+      this._tkRender(code, t, 'snapshot');
+      return this._tkLiveRefresh(code, date, t);
     }
 
-    this._tk = { code: parsed.code, lineId: t.line, stops: stops, fetched: !!t.stops };
+    // ② 本地没有（或只有起终站）→ 联网实时查。查不到再回退本地，都不行才提示手输。
+    //    已经探明没有代理（或环境里压根不能 fetch）时，直接走本地、不绕异步——
+    //    少一次微任务往返，UI 反馈也更干脆。
+    if (TrainAPI.state === 'off' || !TrainAPI.canTry()) {
+      if (t) {
+        this._tkRender(code, t, 'snapshot');
+        return this.toast('未连接服务端，已用本地数据（' + code + '）；' +
+          '实时查询需 python3 railway-demo/server.py');
+      }
+      this._tkHide();
+      return this.toast(this._tkFailText(code, { reason: 'no-proxy' }));
+    }
+    const ageEl = document.getElementById('tkAge');
+    const ageTxt = ageEl ? ageEl.textContent : '';
+    if (ageEl) ageEl.textContent = '正在向 12306 查询 ' + code + ' 的经停站…';
+    TrainAPI.lookup(code, date).then(r => {
+      if (ageEl) ageEl.textContent = ageTxt;
+      if (r.ok) {
+        this._tkRender(code, TrainAPI.decorate(r.rec), 'live');
+        return this.toast(code + ' 实时经停站已获取：' + r.rec.from + ' — ' +
+          r.rec.to + '（' + r.rec.stops.length + ' 站）');
+      }
+      if (t) {
+        // 实时没拿到，但本地至少有起终站或干线站序，先让用户能用
+        this._tkRender(code, t, 'snapshot');
+        return this.toast('实时查询失败（' + TrainAPI.reasonText(r.reason) +
+          '），已先用本地数据，可改用手动录入');
+      }
+      this._tkHide();
+      return this.toast(this._tkFailText(code, r));
+    });
+  },
+
+  // 实时查询失败时，按原因给不同的下一步提示（别一律甩一句"失败"）
+  _tkFailText(code, r) {
+    const manual = '，可用下面的「手动录入车站」填起终点';
+    if (r.reason === 'not-found') {
+      return '12306 上查不到 ' + code + '（可能已裁撤或不在预售期）' + manual;
+    }
+    if (r.reason === 'no-stops') {
+      return '12306 上有 ' + code + '（' + (r.from || '?') + ' — ' + (r.to || '?') +
+        '）但经停站没取到' + manual;
+    }
+    if (r.reason === 'no-proxy') {
+      return '车次 ' + code + ' 不在本地库里；实时查询需先启动服务端' +
+        '（python3 railway-demo/server.py）' + manual;
+    }
+    return '实时查询' + TrainAPI.reasonText(r.reason) + manual;
+  },
+
+  // 后台用实时数据校正已渲染的车次（本地快照先上，避免用户干等）
+  _tkLiveRefresh(code, date, local) {
+    if (!TrainAPI.canTry()) return;
+    TrainAPI.lookup(code, date).then(r => {
+      if (!r.ok) return;                                  // 静默：本地已经能用
+      if (!this._tk || this._tk.code !== code) return;     // 用户已经换了车次，别插队
+      const a = local.stops || [], b = r.rec.stops || [];
+      const same = a.length === b.length && a.every((s, i) => s === b[i]);
+      if (same) {
+        // 站序一致：只把来源标注换成「实时」，不动用户的选择
+        this._tk.fetched = true;
+        this._tk.src = 'live';
+        const info = document.getElementById('tkInfo');
+        if (info) info.textContent = this._tkInfoText();
+        return;
+      }
+      // 站序变了 → 用实时数据重渲染，尽量保住用户已选的乘降站
+      const keepFrom = (document.getElementById('tkFrom') || {}).value || '';
+      const keepTo = (document.getElementById('tkTo') || {}).value || '';
+      this._tkRender(code, TrainAPI.decorate(r.rec), 'live');
+      if (keepFrom && this._tk.stops.indexOf(keepFrom) >= 0) {
+        document.getElementById('tkFrom').value = keepFrom;
+        this._fillToOptions(keepFrom, keepTo);
+        if (keepTo && this._tk.stops.indexOf(keepTo) >= 0) {
+          document.getElementById('tkTo').value = keepTo;
+        }
+        this._tkHighlight();
+      }
+      this.toast('已按 12306 实时数据更新 ' + code + ' 的经停站（' +
+        r.rec.from + ' — ' + r.rec.to + '，快照 ' + a.length + ' 站 → 实时 ' + b.length + ' 站）');
+    });
+  },
+
+  // 车次信息行文案（快照 / 实时 / 预设线路 三种来源说清楚）
+  _tkInfoText() {
+    const tk = this._tk;
+    if (!tk) return '';
+    const line = tk.lineId ? LINES[tk.lineId] : null;
+    const head = tk.code + (line && line.name ? ' · ' + line.name : '') + ' · 全程 ' +
+      tk.stops.length + ' 站（' + tk.stops[0] + ' — ' + tk.stops[tk.stops.length - 1] + '）';
+    if (tk.src === 'live') return head + ' · 12306 实时';
+    if (tk.fetched) return head + ' · 本地快照';
+    return head + '（站序来自预设线路，可能不是最新）';
+  },
+
+  // 把一份车次记录渲染成乘降站选择器。
+  // rec 至少要有 from/to/stops 之一可用；src = 'live' | 'snapshot'
+  _tkRender(code, rec, src) {
+    const line = rec.line ? LINES[rec.line] : null;
+    // 站序来源优先用 stops（权威、带全部经停站），
+    // 没有才回退到 LINES[line].stations（预设干线站序，站少且可能过时）
+    let stops = (rec.stops && rec.stops.length >= 2) ? rec.stops.slice() : null;
+    let lineId = rec.line || null;
+    if (!stops && line && line.stations && line.stations.length >= 2) {
+      stops = line.stations.map(s => s[0]);
+      lineId = rec.line;
+    }
+    if (!stops) {
+      this._tkHide();
+      return this.toast('车次 ' + code + ' 的经停站数据不完整');
+    }
+
+    this._tk = {
+      code: code, lineId: lineId, stops: stops, src: src,
+      fetched: src === 'live' || !!(rec.stops && rec.stops.length >= 2)
+    };
     const box = document.getElementById('tkBox');
     const info = document.getElementById('tkInfo');
-    if (info) {
-      info.textContent = parsed.code + (lineName ? ' · ' + lineName : '') + ' · 全程 ' +
-        stops.length + ' 站（' + stops[0] + ' — ' + stops[stops.length - 1] + '）' +
-        (this._tk.fetched ? '' : '（站序来自预设线路，可能不是最新）');
-    }
+    if (info) info.textContent = this._tkInfoText();
     if (box) box.style.display = 'block';
-    // 默认选起终点：乘车站=该车次的实际始发站，下车站=实际终到站；都不合法时退到前两站
+    // 默认选起终点：乘车站=该车次的实际始发站，下车站=实际终到站；都不合法时退到首尾
     const fromSel = document.getElementById('tkFrom');
-    const toSel = document.getElementById('tkTo');
     if (fromSel) {
       fromSel.innerHTML = this._tk.stops.map(n =>
-        '<option value="' + n + '"' + (n === t.from ? ' selected' : '') + '>' + n + '</option>'
+        '<option value="' + n + '"' + (n === rec.from ? ' selected' : '') + '>' + n + '</option>'
       ).join('');
     }
-    // 默认选实际始发/终到站：抓取数据自带 from/to 时用它，
-    // 否则取站序首尾（手写数据里 from/to 可能已过时）
-    let from = t.from, to = t.to;
-    if (!t.from || this._tk.stops.indexOf(t.from) < 0) from = this._tk.stops[0];
-    if (!t.to || this._tk.stops.indexOf(t.to) < 0) to = this._tk.stops[this._tk.stops.length - 1];
-    if (this._tk.stops.indexOf(from) > this._tk.stops.indexOf(to)) { const k = from; from = to; to = k; }
+    let from = rec.from, to = rec.to;
+    if (!from || stops.indexOf(from) < 0) from = stops[0];
+    if (!to || stops.indexOf(to) < 0) to = stops[stops.length - 1];
+    if (stops.indexOf(from) > stops.indexOf(to)) { const k = from; from = to; to = k; }
     this._fillToOptions(from, to);
     if (fromSel) fromSel.value = from;
     this._tkHighlight();

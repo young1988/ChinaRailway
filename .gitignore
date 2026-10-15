@@ -16,3 +16,6 @@ __pycache__/
 # 系统 / 本地
 .DS_Store
 *.local
+
+# 车次查询代理的上游响应缓存（.traincache/ 里的内容可再生，不入库）
+railway-demo/.traincache/
