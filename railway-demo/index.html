@@ -942,6 +942,21 @@ const OSM_LINE = {
   yanshen: '杭深线', hanrong: '宁蓉线'
 };
 
+// 线路名 -> 覆盖省份。预设干线(LINES)自带省份；LINES_REAL 经补丁也可能带 provinces。
+// buildTripByStops 出来的行程 lineId 恒为 null，但 lineName 是走过的 OSM 线名，
+// 据此回查省份，修复「按车次/手动录入的行程覆盖省份恒为 0」的问题（P0#1）。
+const LINE_PROVINCES = (function () {
+  const m = {};
+  const add = (nm, prov) => { if (nm && prov && prov.length && !m[nm]) m[nm] = prov; };
+  Object.keys(LINES).forEach(id => add(LINES[id].name, LINES[id].provinces));
+  // 预设 id 在 OSM 上的真名（部分与 LINES.name 不同：兰新线↔兰新高铁、沿海通道↔杭深线、沪汉蓉通道↔宁蓉线）
+  Object.keys(OSM_LINE).forEach(id => add(OSM_LINE[id], LINES[id] && LINES[id].provinces));
+  // LINES_REAL 经 patches 注入的省份
+  const rl = window.LINES_REAL || {};
+  Object.keys(rl).forEach(nm => add(nm, rl[nm] && rl[nm].provinces));
+  return m;
+})();
+
 const GEOM = (function () {
   const out = {}, real = window.LINES_REAL || {};
   Object.keys(LINES).forEach(id => {
@@ -1927,7 +1942,13 @@ const Core = {
       totalKm += t.km;
       litSegs[t.segKey] = t;
       lineSet[t.lineName] = 1;
-      // 手动录入的行程没有预设线路，省份无从推断，不参与统计
+      // 按线路名回查省份：buildTripByStops 的行程 lineId 恒为 null，
+      // 但 lineName 是实际走过的 OSM 线名（如"京沪高铁"），据此累计覆盖省份。
+      String(t.lineName || '').split('、').forEach(nm => {
+        const ps = LINE_PROVINCES[nm];
+        if (ps) ps.forEach(p => provSet[p] = 1);
+      });
+      // 兜底：预设 buildTrip 的行程带 lineId，再补一次
       if (t.lineId && LINES[t.lineId]) LINES[t.lineId].provinces.forEach(p => provSet[p] = 1);
     });
     let litKm = 0;
@@ -2769,8 +2790,8 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.19.0';
-const APP_DATE = '2026-10-15';
+const APP_VERSION = '0.20.0';
+const APP_DATE = '2026-10-16';
 
 /* ============================================================
    Store：行程存档（本机持久化 + 多档案 + 导出导入）

@@ -106,7 +106,8 @@ def build(name, items):
     kind, kinfo = P.classify(tags, ways)
     # 名字兜底：OSM 上「朝凌高速线」这类线路缺 maxspeed 标签会被误判成普速，
     # 但既然是从 highspeed=yes 捞出来的，名字带高铁特征词的一律按高铁渲染。
-    if kind != "highspeed" and any(w in name for w in ("高速线", "高铁", "客专", "城际")):
+    # 注意：**城际**不在列表（见 process_conventional.py 的说明）——城际不属于高速铁路。
+    if kind != "highspeed" and any(w in name for w in ("高速线", "高铁", "客专")):
         kind = "highspeed"
     chains = P.stitch(ways)
     merged = P.merge_chains([c for c in chains if len(c) >= 3], MERGE_TOL)
