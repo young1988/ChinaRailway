@@ -359,6 +359,13 @@
 <script src="gaps.js"></script>
 <script src="ferry.js"></script>
 <script src="trains.js"></script>
+<!-- 本地全量车次清单（与 12306 官方 train_list.js 同构，由 tools/build_train_list_js.py 生成）。
+     仅含 车次号 + 起终站 + train_no，不含经停站；无服务端时也能答「车在不在、起终站」。
+     注意：12306 官方 train_list.js 已停更于 2022 年（实测返回 2022-08 数据），不可用。
+     若要改用官方实时源：把下面这行去掉注释、并确保对方带 CORS 头即可：
+     <script src="https://kyfw.12306.cn/otn/resources/js/query/train_list.js"></script>
+-->
+<script src="train_list_local.js"></script>
 <script src="line_py.js"></script>
 <script src="line_alias.js"></script>
 </head>
@@ -701,6 +708,46 @@ const TRAINS = Object.assign({}, TRAINS_BASE, (window.TRAINS_EXT && window.TRAIN
 // 抓取日期，供 UI 提示「车次数据可能不是最新的」
 const TRAINS_FETCHED_AT = (window.TRAINS_EXT && window.TRAINS_EXT.queryDate) || '';
 
+// 本地全量车次清单（train_list_local.js 注入的 window.train_list，与 12306 官方
+// train_list.js 同构：{日期:{字头:[{station_train_code:"K50(齐齐哈尔-杭州)", train_no}]}}）。
+// 它**不含经停站**，价值在于：没有 server.py 时，前端也能直接判断
+// 「这个车次在不在、起终站是哪」——弥补此前「查不到 Z158」这类问题。
+// 12306 官方 train_list.js 已停更于 2022 年，所以默认用本地这份最近公开快照。
+const TrainList = (function () {
+  const raw = window.train_list;
+  const index = {};                       // CODE -> {from, to, trainNo, date}
+  let snap = '';
+  if (raw && typeof raw === 'object') {
+    // 多个日期时取最新；车次号基本唯一，重复项后者覆盖前者即可
+    const dates = Object.keys(raw).sort();
+    snap = dates[dates.length - 1] || '';
+    for (const date of dates) {
+      const typmap = raw[date] || {};
+      for (const typ of Object.keys(typmap)) {
+        for (const e of (typmap[typ] || [])) {
+          const m = /^(.+?)\((.+?)-(.+?)\)$/.exec(e.station_train_code || '');
+          if (!m) continue;
+          const code = m[1].toUpperCase();
+          if (!index[code]) {
+            index[code] = { from: m[2], to: m[3], trainNo: e.train_no, date: date };
+          }
+        }
+      }
+    }
+  }
+  return {
+    size: Object.keys(index).length,
+    snapshot: snap,
+    // 返回 {ok, from, to, trainNo, date} 或 null
+    get(code) {
+      if (!code) return null;
+      const r = index[String(code).toUpperCase()];
+      return r ? { ok: true, from: r.from, to: r.to, trainNo: r.trainNo, date: r.date } : null;
+    }
+  };
+})();
+
+
 /* ============================================================
    TrainAPI：实时车次查询（方案 B）
 
@@ -798,7 +845,15 @@ const TrainAPI = {
   // directSearch 是**兜底**，只在代理不可用时用，且只探存活性。
   directSearch(code, day) {
     code = String(code || '').toUpperCase();
-    if (!code || typeof fetch !== 'function') {
+    if (!code) return Promise.resolve({ ok: false, reason: 'missing-code' });
+    // 本地全量清单（train_list_local.js）优先：没有 server.py 也能答
+    // 「这个车次在不在、起终站是哪」（localOnly 标记：无完整经停站）
+    const local = TrainList.get(code);
+    if (local) {
+      return Promise.resolve({ ok: true, from: local.from, to: local.to,
+                               trainNo: local.trainNo, date: local.date, localOnly: true });
+    }
+    if (typeof fetch !== 'function') {
       return Promise.resolve({ ok: false, reason: 'no-fetch' });
     }
     // 日期用「今天+10 天」：当天的时刻表 12306 未必排全，往后几天更稳
@@ -2790,7 +2845,7 @@ const MapAdapter = {
 
 /* 产品版本：改动功能时同步 +1，并与《铁路足迹-使用文档》文末的更新日志保持一致。
    注意与 Store.VER（存档格式版本）区分，两者互不相干。 */
-const APP_VERSION = '0.21.0';
+const APP_VERSION = '0.22.0';
 const APP_DATE = '2026-10-28';
 
 /* ============================================================
@@ -3547,6 +3602,7 @@ const App = {
     used.forEach(c => {
       if (!ext) return;                       // 没有抓取数据就无从判断
       if (ext[c]) live.push(c);
+      else if (TrainList.get(c)) live.push(c);   // 本地全量清单里有 -> 视为在运营
       else if (TRAINS[c]) stale.push(c);      // 只在内置兜底里，抓取库里没有 -> 大概率已裁撤
       else unknown.push(c);                   // 两边都没有
     });
